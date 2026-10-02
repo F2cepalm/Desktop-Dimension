@@ -91,6 +91,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         Tool = tool;
         foreach (var space in _spaces)
             space.Window.Tool = tool;
+        ToolCursors.RefreshUnderMouse(); // over a space, a screen note or any window of ours alike
         ToolChanged?.Invoke(tool);
     }
 
@@ -1002,6 +1003,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         {
             if (_textEntry == entry)
                 _textEntry = null;
+            ToolCursors.RefreshUnderMouse(); // the text box's cursor would stay until the mouse moved
             if (editing is not null)
             {
                 foreach (var shown in _spaces.Where(s => s.Window.Editing == editing))

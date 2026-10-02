@@ -46,10 +46,6 @@ internal sealed partial class SpaceWindow : IDisposable
     /// </summary>
     private const uint PlaceFlags = Win32.SWP_NOZORDER | Win32.SWP_NOACTIVATE | Win32.SWP_NOREDRAW | Win32.SWP_NOCOPYBITS | Win32.SWP_DEFERERASE;
 
-    private static readonly IntPtr CrossCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_CROSS);
-    private static readonly IntPtr MoveCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_SIZEALL);
-    private static readonly IntPtr ArrowCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW);
-    private static readonly IntPtr IBeamCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_IBEAM);
 
     private readonly HwndSource _source;
     private SpaceSurface _surface; // made again if the GPU is lost (see RecreateGraphics)
@@ -180,12 +176,29 @@ internal sealed partial class SpaceWindow : IDisposable
             _tool = value;
             if (EffectiveTool != Tool.Hand)
                 ClearSelection();
-            RefreshCursor(); // Windows asks for the cursor only on mouse input: a key alone would leave the old one
+            ApplyClickThrough();
         }
     }
 
     /// <summary>The tool as it acts here: the pen, text and eraser as picked, everything else as the hand (screen notes: always the hand).</summary>
     private Tool EffectiveTool => IsSheet ? Tool.Hand : _tool is Tool.Pen or Tool.Text or Tool.Eraser ? _tool : Tool.Hand;
+
+    /// <summary>
+    /// Screen notes take the mouse only for the hand: with another tool they let it through, so they
+    /// neither show the hand's cursor nor take the press meant for what is under them.
+    /// </summary>
+    private bool ClickThrough => _floating || LetsClicksThrough(_record.Kind, _tool);
+
+    /// <summary>Whether a space of this kind lets the mouse through to what is under it, with this tool (see <see cref="ClickThrough"/>).</summary>
+    internal static bool LetsClicksThrough(SpaceKind kind, Tool tool) => kind == SpaceKind.Sheet && tool != Tool.Hand;
+
+    private const int HTCLIENT = 1;
+
+    private void ApplyClickThrough()
+    {
+        if (!_disposed)
+            Win32.SetClickThrough(_source.Handle, ClickThrough);
+    }
 
     /// <summary>Whether this shows screen notes rather than a space (see <see cref="SpaceKind.Sheet"/>).</summary>
     private bool IsSheet => _record.Kind == SpaceKind.Sheet;
@@ -602,7 +615,7 @@ internal sealed partial class SpaceWindow : IDisposable
             return;
         _floating = false;
         _surface.SetPlacement(1, 1, 0, 0);
-        Win32.SetClickThrough(_source.Handle, false);
+        ApplyClickThrough(); // screen notes may still let clicks through for the tool
     }
 
     /// <summary>
@@ -995,7 +1008,7 @@ internal sealed partial class SpaceWindow : IDisposable
                 handled = true;
                 return new IntPtr(Win32.MA_NOACTIVATE);
 
-            case Win32.WM_SETCURSOR:
+            case Win32.WM_SETCURSOR when (lParam.ToInt64() & 0xFFFF) == HTCLIENT:
                 Win32.SetCursor(CursorNow());
                 handled = true;
                 return new IntPtr(1);
@@ -1064,6 +1077,7 @@ internal sealed partial class SpaceWindow : IDisposable
                         HandUp(gesture);
                         break;
                 }
+                RefreshCursor(); // what is under the mouse may have changed (moved, painted, erased)
                 handled = true;
                 break;
             }

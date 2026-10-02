@@ -160,12 +160,8 @@ internal sealed partial class SpaceWindow
     }
 
     /// <summary>The cursor for the tool here, at the mouse.</summary>
-    private IntPtr CursorNow() => EffectiveTool switch
-    {
-        Tool.Pen or Tool.Eraser => CrossCursor,
-        Tool.Text => IBeamCursor,
-        _ => InkUnderCursor() is null ? ArrowCursor : MoveCursor,
-    };
+    private IntPtr CursorNow() =>
+        ToolCursors.For(EffectiveTool, overInk: EffectiveTool == Tool.Hand && (_record.Card || InkUnderCursor() is not null));
 
     /// <summary>Shows the tool's cursor now if the mouse is on this space (Windows only asks for it on mouse input).</summary>
     private void RefreshCursor()

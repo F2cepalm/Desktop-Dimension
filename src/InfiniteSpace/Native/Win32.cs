@@ -332,6 +332,9 @@ internal static class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
     [DllImport("user32.dll")]
     public static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr cursorName);
 

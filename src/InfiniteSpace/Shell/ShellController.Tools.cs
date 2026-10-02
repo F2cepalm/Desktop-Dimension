@@ -118,6 +118,7 @@ internal sealed partial class ShellController
             Foreground.RestoreTo(previousApp);
             spaces.Restack();
             UpdateHoverKeys();
+            ToolCursors.RefreshUnderMouse();
         };
         wheel.Picked += tool => SelectTool(tool, ToolSource.Wheel);
         _wheel = wheel;

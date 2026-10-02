@@ -26,6 +26,9 @@ internal sealed class SpaceRecord
     /// <summary>Text typed on the space.</summary>
     public List<TextNote> Notes { get; set; } = [];
 
+    /// <summary>A text card: one note, which the space hugs (see SpaceManager.Cards.cs).</summary>
+    public bool Card { get; set; }
+
     /// <summary>Whether this is a space or screen notes; spaces from before screen notes existed are spaces.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public SpaceKind Kind { get; set; }

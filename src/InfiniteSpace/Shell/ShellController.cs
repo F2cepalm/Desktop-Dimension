@@ -150,6 +150,8 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
     {
         var open = _overlay;
         open?.Dismiss();
+        if (open is not null)
+            ToolCursors.RefreshUnderMouse(); // its cursor would stay until the mouse moved
         return open;
     }
 
