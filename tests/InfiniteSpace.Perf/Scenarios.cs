@@ -370,6 +370,7 @@ internal static class Scenarios
         var bounds = new Rect(Bench.X, Bench.Y, 600, 400);
         using var bench = new Bench(theme, [Bench.Record(bounds)]);
         var window = bench.Windows[0];
+        bench.Spaces.SetTool(Tool.Pen);
         var timer = new FrameTimer("paint", theme, bench.Gpu);
         Point At(int i) => new(bounds.Left + 40 + i * 2, bounds.Top + 200 + 120 * Math.Sin(i / 20.0));
         Ui.Mouse(window.Handle, WM_LBUTTONDOWN, At(0));

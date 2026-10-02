@@ -281,6 +281,7 @@ internal static class Win32
     public const byte AC_SRC_OVER = 0x00;
     public const byte AC_SRC_ALPHA = 0x01;
     public const int IDC_ARROW = 32512;
+    public const int IDC_IBEAM = 32513;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct SIZE

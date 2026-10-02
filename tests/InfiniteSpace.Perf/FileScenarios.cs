@@ -197,17 +197,16 @@ internal static class FileScenarios
             }
             else
             {
-                // An opened file moves only while edited (E): dragging on it paints, as anywhere else.
+                // An opened file moves only while edited (E); the hand doesn't paint.
                 Check(after == before, "the file stays put when dragged outside edit mode");
-                Check(record.Strokes.Count == 1, "dragging on the file painted a stroke");
+                Check(record.Strokes.Count == 0, "dragging an opened file with the hand leaves no paint");
             }
         }
         options.Picture(window.Handle, $"notes-{theme}");
 
         var text = record.Notes.Single(n => n.File is null);
-        bench.Spaces.Undo(window.Handle); // the stroke
         bench.Spaces.Undo(window.Handle); // the move
-        Check(record.Strokes.Count == 0 && record.Notes.Single(n => n.File is null) == text.Previous, "undo takes the stroke off, then puts the text back where it was");
+        Check(record.Strokes.Count == 0 && record.Notes.Single(n => n.File is null) == text.Previous, "undo puts the text back where it was");
         Ui.Pump(300);
         var saved = bench.Store.Load().Single();
         Check(saved.Notes.Count == 2 && saved.Notes.Single(n => n.File is not null).Text.Length > 100, "both notes saved, the file's text with it");

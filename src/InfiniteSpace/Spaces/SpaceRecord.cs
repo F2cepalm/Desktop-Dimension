@@ -215,6 +215,27 @@ internal sealed class InkStroke : IInk
         var at = toScreen.Transform(from);
         return new Matrix(1, 0, 0, 1, at.X - from.X, at.Y - from.Y);
     }
+
+    /// <summary>
+    /// A stroke painted on screen (DIPs), kept in the record's coordinates: only its place is mapped back
+    /// through <paramref name="toScreen"/>, its shape is kept as painted (see <see cref="Placed"/>).
+    /// </summary>
+    public static InkStroke FromScreen(IReadOnlyList<Point> points, Matrix toScreen, InkPen pen)
+    {
+        var toRecord = toScreen;
+        if (toRecord.HasInverse)
+            toRecord.Invert();
+        var corner = new Point(points.Min(p => p.X), points.Min(p => p.Y));
+        var shift = toRecord.Transform(corner) - corner;
+        var xy = new double[points.Count * 2];
+        for (int i = 0; i < points.Count; i++)
+        {
+            var p = points[i] + shift;
+            xy[i * 2] = Math.Round(p.X, 2);
+            xy[i * 2 + 1] = Math.Round(p.Y, 2);
+        }
+        return new InkStroke { Points = xy, Thickness = pen.Thickness, Color = pen.Color, Order = InkOrder.Next() };
+    }
 }
 
 internal sealed class TextNote : IInk

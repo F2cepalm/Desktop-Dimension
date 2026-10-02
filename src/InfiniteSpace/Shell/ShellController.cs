@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 namespace InfiniteSpace.Shell;
 
 /// <summary>Wires hotkeys and the tray icon to the draw/erase overlay and the spaces.</summary>
-internal sealed class ShellController(SpaceManager spaces, SpaceStore store, Universe universe, ILogger<ShellController> logger) : IDisposable
+internal sealed partial class ShellController(SpaceManager spaces, SpaceStore store, Universe universe, ILogger<ShellController> logger) : IDisposable
 {
     /// <summary>How long after the mouse last moved T and E still belong to the space under it.</summary>
     internal static readonly TimeSpan LetterKeysAfterMouseMove = TimeSpan.FromSeconds(3);
@@ -28,7 +28,6 @@ internal sealed class ShellController(SpaceManager spaces, SpaceStore store, Uni
     private FrameStatsWindow? _frameStats;
     private AppSettings _settings = new();
     private HoverKey[] _undoKeys = [];
-    private HoverKey? _typeKey;
     private HoverKey? _editKey;
 
     public void Start()
@@ -79,7 +78,9 @@ internal sealed class ShellController(SpaceManager spaces, SpaceStore store, Uni
             new(ModifierKeys.Control, Key.Z, () => spaces.Undo(spaces.SpaceUnderCursor()), repeat: true),
             new(ModifierKeys.Control, Key.Y, () => spaces.Redo(spaces.SpaceUnderCursor()), repeat: true),
         ];
-        _typeKey = new(ModifierKeys.None, Key.T, () => StartTyping(spaces.TypeAtCursor));
+        _toolKeys = [.. ToolCatalog.All
+            .Where(t => t.Key is not null)
+            .Select(t => new HoverKey(ModifierKeys.None, t.Key!.Value, () => SelectTool(t.Tool, ToolSource.SpaceKey)))];
         _editKey = new(ModifierKeys.None, Key.E, () => StartTyping(spaces.EditAtCursor));
         _hoverTimer.Tick += (_, _) => UpdateHoverKeys();
         _hoverTimer.Start();
@@ -138,14 +139,19 @@ internal sealed class ShellController(SpaceManager spaces, SpaceStore store, Uni
     }
 
     /// <param name="host">Gets focus back when the overlay closes.</param>
-    private void ShowOverlay(GpuOverlay overlay, IntPtr host)
+    /// <param name="endsInHand">Closing it returns to the Hand (a screen-wide tool).</param>
+    private void ShowOverlay(GpuOverlay overlay, IntPtr host, bool endsInHand = false)
     {
         _overlay?.Dismiss();
         FadeInkTools(); // drawing, erasing or moving now
         overlay.Closed += (_, _) =>
         {
             if (_overlay == overlay)
+            {
                 _overlay = null;
+                if (endsInHand)
+                    spaces.SetTool(Tool.Hand); // every screen-wide tool ends in the hand
+            }
             Foreground.RestoreTo(host);
             spaces.Restack(); // the app just came to the front: its spaces go straight back on top of it
         };
@@ -156,11 +162,11 @@ internal sealed class ShellController(SpaceManager spaces, SpaceStore store, Uni
     /// <summary>
     /// Keys that belong to a space while the mouse is on it, and to the focused app the rest of the
     /// time: they are registered as hotkeys only while hovering. Over a space: Ctrl+Z / Ctrl+Y (undo,
-    /// redo) and T (type there). Over its text, also E (edit that note). None while an overlay or a
-    /// text box is open, so the keys type as usual there.
+    /// redo) and H, P, T, C (pick a tool). Over its text with the hand, also E (edit that note). None
+    /// while an overlay or a text box is open, so the keys type as usual there.
     /// </summary>
     /// <remarks>
-    /// T and E are plain letters, so they are only taken while the mouse moved lately (see
+    /// H, P, T, C and E are plain letters, so they are only taken while the mouse moved lately (see
     /// <see cref="LetterKeysAfterMouseMove"/>): pointing at a space and pressing one works, but typing
     /// into the app underneath with the mouse resting on a space keeps its letters.
     /// </remarks>
@@ -170,10 +176,12 @@ internal sealed class ShellController(SpaceManager spaces, SpaceStore store, Uni
             return;
         bool moved = Win32.GetCursorPos(out var p) && _cursor.Sample(new Point(p.X, p.Y), _clock.Elapsed);
         var hover = _overlay is null && !spaces.IsTyping ? spaces.HoverAtCursor() : SpaceManager.Hover.None;
+        bool onSpace = hover is SpaceManager.Hover.Space or SpaceManager.Hover.Note;
         foreach (var key in _undoKeys)
             key.Hold(_hotkeys, hover != SpaceManager.Hover.None);
-        _typeKey?.Hold(_hotkeys, moved && hover != SpaceManager.Hover.None);
-        _editKey?.Hold(_hotkeys, moved && hover == SpaceManager.Hover.Note);
+        foreach (var key in _toolKeys)
+            key.Hold(_hotkeys, moved && onSpace);
+        _editKey?.Hold(_hotkeys, moved && hover == SpaceManager.Hover.Note && spaces.Tool == Tool.Hand);
     }
 
     /// <summary>T or E: opens a text box, and gives the keys back at once so that the very next one types.</summary>

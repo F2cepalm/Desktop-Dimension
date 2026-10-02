@@ -5,6 +5,7 @@ using InfiniteSpace.Rendering;
 using InfiniteSpace.Spaces;
 using Color4 = Vortice.Mathematics.Color4;
 using Int2 = Vortice.Mathematics.Int2;
+using RawRectF = Vortice.RawRectF;
 
 namespace InfiniteSpace.Shell;
 
@@ -31,8 +32,20 @@ internal sealed class BlockOverlay : GpuOverlay
     private const double GripMargin = 8;
     private const double HandleSize = 8;
 
+    /// <summary>How thick the outline round the block is (DIPs): a dark halo with white dashes along its middle.</summary>
+    private const double FrameWidth = 3;
+
+    /// <summary>How far outside the block (DIPs) its outline runs.</summary>
+    private const double FrameGap = 2;
+
+    private static readonly Color4 FrameInk = new(1, 1, 1, 0xB3 / 255f);
+    private static readonly Color4 FrameHalo = new(0, 0, 0, 0.55f);
+
     private readonly SpaceManager _spaces;
     private readonly IntPtr _host;
+    private readonly OverlayPicture _across;
+    private readonly OverlayPicture _down;
+    private readonly OverlaySprite[] _sides; // top, bottom, left, right
     private readonly OverlayPicture _handle;
     private readonly OverlaySprite[] _handles;
     private readonly OverlaySprite _size;
@@ -52,6 +65,13 @@ internal sealed class BlockOverlay : GpuOverlay
         _spaces = spaces;
         _host = host;
         Cursor = SystemCursors.SizeAll;
+
+        // The outline shows over spaces until the block is created (over a space in the same theme its
+        // rim can vanish): dashed lines as long as the overlay, cut to the block's size by a clip.
+        double longest = Math.Max(PixelWidth, PixelHeight) / Native.Dpi.Scale + 8;
+        _across = OverlayPicture.Paint(Gpu, longest, FrameWidth, context => DashedLine(context, longest, horizontal: true));
+        _down = OverlayPicture.Paint(Gpu, FrameWidth, longest, context => DashedLine(context, longest, horizontal: false));
+        _sides = [new(Gpu, Layers, _across), new(Gpu, Layers, _across), new(Gpu, Layers, _down), new(Gpu, Layers, _down)]; // before the handles, which stay on top
         _handle = OverlayPicture.Paint(Gpu, HandleSize, HandleSize, context =>
         {
             using var white = context.CreateSolidColorBrush(new Color4(1, 1, 1, 1));
@@ -86,6 +106,10 @@ internal sealed class BlockOverlay : GpuOverlay
 
     protected override void DisposeParts()
     {
+        foreach (var side in _sides)
+            side.Dispose();
+        _across.Dispose();
+        _down.Dispose();
         foreach (var handle in _handles)
             handle.Dispose();
         _handle.Dispose();
@@ -201,6 +225,16 @@ internal sealed class BlockOverlay : GpuOverlay
     {
         _preview?.ReshapeLive(Outline(), Matrix.Identity); // drawn on the next frame; in Dreamy a resize wobbles like jelly
 
+        // The outline, just outside the block, whether or not it has been dropped.
+        var box = Rect.Inflate(_rect, FrameGap, FrameGap);
+        double scale = Native.Dpi.Scale;
+        float across = (float)Math.Round((box.Width + 2 * FrameWidth) * scale), down = (float)Math.Round((box.Height + 2 * FrameWidth) * scale);
+        float thick = (float)Math.Round(FrameWidth * scale);
+        Place(_sides[0], new Point(box.Left - FrameWidth, box.Top - FrameWidth), new RawRectF(0, 0, across, thick));
+        Place(_sides[1], new Point(box.Left - FrameWidth, box.Bottom), new RawRectF(0, 0, across, thick));
+        Place(_sides[2], new Point(box.Left - FrameWidth, box.Top - FrameWidth), new RawRectF(0, 0, thick, down));
+        Place(_sides[3], new Point(box.Right, box.Top - FrameWidth), new RawRectF(0, 0, thick, down));
+
         // Handles on the corners and edge midpoints, once the block is dropped and can be resized.
         double[] xs = [_rect.Left, _rect.Left + _rect.Width / 2, _rect.Right];
         double[] ys = [_rect.Top, _rect.Top + _rect.Height / 2, _rect.Bottom];
@@ -227,5 +261,26 @@ internal sealed class BlockOverlay : GpuOverlay
         }
         _size.MoveTo(new Point(_rect.X, _rect.Bottom + 12)); // clear of the rim's wobble
         _size.Shown = true;
+    }
+
+    private static void Place(OverlaySprite side, Point at, RawRectF clip)
+    {
+        side.MoveTo(at);
+        side.Visual.SetClip(clip);
+        side.Shown = true;
+    }
+
+    /// <summary>A dark line <see cref="FrameWidth"/> thick with one-DIP white dashes of 4 (gaps of 3) along its middle: it reads on light themes and dark ones alike.</summary>
+    private static void DashedLine(Vortice.Direct2D1.ID2D1DeviceContext context, double length, bool horizontal)
+    {
+        using var halo = context.CreateSolidColorBrush(FrameHalo);
+        using var ink = context.CreateSolidColorBrush(FrameInk);
+        float far = (float)length, thick = (float)FrameWidth, mid = (float)((FrameWidth - 1) / 2);
+        context.FillRectangle(horizontal ? new RawRectF(0, 0, far, thick) : new RawRectF(0, 0, thick, far), halo);
+        for (double at = 0; at < length; at += 7)
+        {
+            float from = (float)at, to = (float)Math.Min(length, at + 4);
+            context.FillRectangle(horizontal ? new RawRectF(from, mid, to, mid + 1) : new RawRectF(mid, from, mid + 1, to), ink);
+        }
     }
 }

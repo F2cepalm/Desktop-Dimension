@@ -47,6 +47,8 @@ internal sealed partial class SpaceWindow : IDisposable
 
     private static readonly IntPtr CrossCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_CROSS);
     private static readonly IntPtr MoveCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_SIZEALL);
+    private static readonly IntPtr ArrowCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_ARROW);
+    private static readonly IntPtr IBeamCursor = Win32.LoadCursor(IntPtr.Zero, Win32.IDC_IBEAM);
 
     private readonly HwndSource _source;
     private SpaceSurface _surface; // made again if the GPU is lost (see RecreateGraphics)
@@ -140,6 +142,7 @@ internal sealed partial class SpaceWindow : IDisposable
         Pressed,
         Painting,
         MovingNote,
+        TextPressed,
     }
 
     public IntPtr Handle => _source.Handle;
@@ -159,8 +162,20 @@ internal sealed partial class SpaceWindow : IDisposable
     /// <summary>Colour and width of the next paint stroke (one being painted keeps the pen it started with).</summary>
     public InkPen Pen { get; set; } = InkPen.Default;
 
+    private Tool _tool = Tool.Hand;
+
     /// <summary>What the mouse does here (set for every space by <see cref="SpaceManager.SetTool"/>).</summary>
-    public Tool Tool { get; set; } = Tool.Hand;
+    public Tool Tool
+    {
+        get => _tool;
+        set => _tool = value; // Phase 3: leaving the hand clears the selection
+    }
+
+    /// <summary>The tool as it acts here: the pen and text as picked, everything else as the hand.</summary>
+    private Tool EffectiveTool => _tool is Tool.Pen or Tool.Text ? _tool : Tool.Hand;
+
+    /// <summary>The text tool clicked here (screen DIPs): a text box should open there.</summary>
+    public event Action<SpaceWindow, Point>? TypeRequested;
 
     /// <summary>
     /// Where notes are drawn on screen (DIPs) while the space is being moved and reshaped, when that
@@ -893,7 +908,12 @@ internal sealed partial class SpaceWindow : IDisposable
                 return new IntPtr(Win32.MA_NOACTIVATE);
 
             case Win32.WM_SETCURSOR:
-                Win32.SetCursor(NoteUnderCursor() is null ? CrossCursor : MoveCursor);
+                Win32.SetCursor(EffectiveTool switch
+                {
+                    Tool.Pen => CrossCursor,
+                    Tool.Text => IBeamCursor,
+                    _ => NoteUnderCursor() is null ? ArrowCursor : MoveCursor,
+                });
                 handled = true;
                 return new IntPtr(1);
 
@@ -907,9 +927,9 @@ internal sealed partial class SpaceWindow : IDisposable
                     break;
                 if (Contains(at))
                 {
-                    _gesture = Gesture.Pressed;
+                    _gesture = EffectiveTool == Tool.Text ? Gesture.TextPressed : Gesture.Pressed;
                     _pressedAt = at;
-                    _pressedNote = NoteUnder(at); // dragged, it moves rather than paints
+                    _pressedNote = EffectiveTool == Tool.Hand ? NoteUnder(at) : null; // only the hand moves text
                     Win32.SetCapture(hwnd);
                 }
                 break;
@@ -929,8 +949,10 @@ internal sealed partial class SpaceWindow : IDisposable
                     FinishStroke();
                 else if (gesture == Gesture.MovingNote)
                     FinishNoteMove();
-                else if (gesture == Gesture.Pressed && !(IsCtrlDown() && NoteClicked?.Invoke(this, _pressedAt, NoteClick.CtrlClick) == true))
-                    _look.AddBurst(_pressedAt); // a click only splashes (Ctrl+click on a link opens it); T over a space types
+                else if (gesture == Gesture.TextPressed)
+                    TypeRequested?.Invoke(this, _pressedAt);
+                else if (gesture == Gesture.Pressed && !(EffectiveTool == Tool.Hand && IsCtrlDown() && NoteClicked?.Invoke(this, _pressedAt, NoteClick.CtrlClick) == true))
+                    _look.AddBurst(_pressedAt); // a click only splashes (Ctrl+click on a link opens it with the hand)
                 handled = true;
                 break;
             }
@@ -971,6 +993,8 @@ internal sealed partial class SpaceWindow : IDisposable
 
     private void Drag(Point at)
     {
+        if (_gesture == Gesture.TextPressed)
+            return;
         if (_gesture == Gesture.Pressed)
         {
             if ((at - _pressedAt).Length < DragThreshold)
@@ -981,9 +1005,13 @@ internal sealed partial class SpaceWindow : IDisposable
                 _movingNote = note;
                 PaintingStarted?.Invoke(this); // the palette and text boxes get out of the way, as for paint
             }
-            else
+            else if (EffectiveTool == Tool.Pen)
             {
                 _gesture = Gesture.Painting;
+            }
+            else
+            {
+                return; // the hand doesn't paint
             }
         }
         if (_gesture == Gesture.MovingNote)
@@ -1014,21 +1042,8 @@ internal sealed partial class SpaceWindow : IDisposable
         if (_stroke.Count == 0)
             return;
         // Painted on screen; kept in the record's coordinates (they differ while the app is stretched).
-        // Only its place is mapped back, its shape is kept as painted (see InkStroke.Placed).
-        var toRecord = _toScreen;
-        if (toRecord.HasInverse)
-            toRecord.Invert();
-        var corner = new Point(_stroke.Min(p => p.X), _stroke.Min(p => p.Y));
-        var shift = toRecord.Transform(corner) - corner;
-        var points = new double[_stroke.Count * 2];
-        for (int i = 0; i < _stroke.Count; i++)
-        {
-            var p = _stroke[i] + shift;
-            points[i * 2] = Math.Round(p.X, 2);
-            points[i * 2 + 1] = Math.Round(p.Y, 2);
-        }
+        _record.Strokes.Add(InkStroke.FromScreen(_stroke, _toScreen, _strokePen));
         _stroke = [];
-        _record.Strokes.Add(new InkStroke { Points = points, Thickness = _strokePen.Thickness, Color = _strokePen.Color, Order = InkOrder.Next() });
         InkChanged?.Invoke(this);
     }
 

@@ -391,6 +391,7 @@ internal static class SystemCursors
 {
     public static readonly IntPtr Arrow = Load(Win32.IDC_ARROW);
     public static readonly IntPtr Cross = Load(Win32.IDC_CROSS);
+    public static readonly IntPtr IBeam = Load(Win32.IDC_IBEAM);
     public static readonly IntPtr Hand = Load(Win32.IDC_HAND);
     public static readonly IntPtr SizeAll = Load(Win32.IDC_SIZEALL);
     public static readonly IntPtr SizeNWSE = Load(Win32.IDC_SIZENWSE);

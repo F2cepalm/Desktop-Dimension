@@ -287,15 +287,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         return space is null ? Hover.None : NoteAt(space, at) is null ? Hover.Space : Hover.Note;
     }
 
-    /// <summary>T over a space: a text box for a new note, its first line centred on the mouse.</summary>
-    /// <returns>false when the mouse is not on a space.</returns>
-    public bool TypeAtCursor()
-    {
-        if (HoveredSpace(out var at) is not { } space)
-            return false;
-        BeginText(space, at, editing: null);
-        return true;
-    }
+    /// <summary>The app window the space under the mouse sits on (zero: desktop level), else the app in front: where C draws.</summary>
+    public IntPtr HostAtCursor() => HoveredSpace(out _) is { } space ? space.Window.Host : Foreground.CaptureHost();
 
     /// <summary>E over text on a space: that note in a text box, to edit, move and reshape it.</summary>
     /// <returns>false when the mouse is not on a note.</returns>
@@ -579,6 +572,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
             Persist();
         };
         window.PaletteRequested += (_, at) => PaletteRequested?.Invoke(at);
+        window.TypeRequested += (_, at) => BeginText(space, at, editing: null);
         window.PaintingStarted += _ =>
         {
             CommitTyping(fade: true); // what was being typed stays; the box gets out of the way
