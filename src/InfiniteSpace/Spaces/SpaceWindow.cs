@@ -123,6 +123,7 @@ internal sealed partial class SpaceWindow : IDisposable
             Height = 1,
         });
         _source.AddHook(WndProc);
+        Live[_source.Handle] = this;
         if (previewUnder == IntPtr.Zero && record.Kind == SpaceKind.Space)
             AcceptFiles();
         int noRounding = Win32.DWMWCP_DONOTROUND;
@@ -825,7 +826,7 @@ internal sealed partial class SpaceWindow : IDisposable
             Win32.ShowWindow(_source.Handle, Win32.SW_SHOWNOACTIVATE);
             _hidden = false;
         }
-        if (_shown && _liftedUnder == IntPtr.Zero && Win32.GetWindow(_host, Win32.GW_HWNDPREV) != _source.Handle)
+        if (_shown && _liftedUnder == IntPtr.Zero && Win32.GetWindow(StackBelow(), Win32.GW_HWNDPREV) != _source.Handle)
             PlaceAboveHost();
         return true;
     }
@@ -850,11 +851,37 @@ internal sealed partial class SpaceWindow : IDisposable
 
     private void PlaceAboveHost()
     {
-        // SetWindowPos puts us *below* the insert-after window, so insert after whatever is above the app.
-        IntPtr above = Win32.GetWindow(_host, Win32.GW_HWNDPREV);
+        // SetWindowPos puts us *below* the insert-after window, so insert after whatever is above our place.
+        IntPtr above = Win32.GetWindow(StackBelow(), Win32.GW_HWNDPREV);
+        if (above == _source.Handle)
+            return;
         bool aboveIsTopmost = above != IntPtr.Zero && (Win32.GetWindowLong(above, Win32.GWL_EXSTYLE) & Win32.WS_EX_TOPMOST) != 0;
         IntPtr insertAfter = above == IntPtr.Zero || aboveIsTopmost ? Win32.HWND_TOP : above;
         Win32.SetWindowPos(_source.Handle, insertAfter, 0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
+    }
+
+    /// <summary>The space windows open now, by handle (for stacking spaces on one app among themselves).</summary>
+    private static readonly Dictionary<IntPtr, SpaceWindow> Live = [];
+
+    /// <summary>Where it stacks among the spaces on its app: text cards above spaces, the newest card on top.</summary>
+    private long StackRank => _record.Card ? _record.CreatedAt.UtcTicks : 0;
+
+    /// <summary>
+    /// The window this one belongs directly above: its app, or the highest of the spaces on the app that stack
+    /// no higher than this one. Spaces of the same rank keep whatever order they have, so none keep trading places.
+    /// </summary>
+    private IntPtr StackBelow()
+    {
+        IntPtr below = _host;
+        for (int i = 0; i < 256; i++)
+        {
+            IntPtr above = Win32.GetWindow(below, Win32.GW_HWNDPREV);
+            if (above == IntPtr.Zero || above == _source.Handle || !Live.TryGetValue(above, out var other) ||
+                other._host != _host || other._liftedUnder != IntPtr.Zero || other.StackRank > StackRank)
+                break;
+            below = above;
+        }
+        return below;
     }
 
     /// <summary>
@@ -1167,6 +1194,7 @@ internal sealed partial class SpaceWindow : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        Live.Remove(_source.Handle);
         _look.Dispose();
         _ink?.Dispose();
         _surface.Dispose();

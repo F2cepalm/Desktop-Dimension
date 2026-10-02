@@ -243,13 +243,13 @@ internal sealed partial class SpaceWindow
     /// <summary>The selection's frames (one per group, or per item outside groups) and the rectangle being dragged.</summary>
     private InkAdornments? Adornments()
     {
-        if (_selected.Count == 0 && _marquee is null)
-            return null;
+        if ((_selected.Count == 0 || _record.Card) && _marquee is null)
+            return null; // a card is its own frame: its text gets none
         // Worked out once per selection and mapping: a drag only shifts them.
         if (_frames is null || _framesStale || _framesFor != _toScreen)
         {
             _frames = [];
-            foreach (var group in _selected.GroupBy(i => i.Group ?? (object)i))
+            foreach (var group in _selected.Where(_ => !_record.Card).GroupBy(i => i.Group ?? (object)i))
             {
                 var box = Rect.Empty;
                 foreach (var item in group)
