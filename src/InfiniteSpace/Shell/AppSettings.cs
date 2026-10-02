@@ -35,6 +35,18 @@ internal sealed class AppSettings
     /// <summary>Shows a small graph of frame times in a corner (see <see cref="FrameStatsWindow"/>): set by hand, for diagnosing.</summary>
     public bool ShowFrameStats { get; set; }
 
+    /// <summary>The tool wheel's hotkey, as in "Ctrl+Alt+`"; null uses the default (others are tried if it is taken).</summary>
+    public string? ToolWheelHotkey { get; set; }
+
+    /// <summary>Whether the toolbar (the square with three dots) is on screen.</summary>
+    public bool ShowToolbar { get; set; } = true;
+
+    /// <summary>Where the toolbar's square was left (screen DIPs); null puts it at the primary screen's right edge.</summary>
+    public double? ToolbarLeft { get; set; }
+
+    /// <summary>The top of the toolbar's square (screen DIPs); null puts it at the primary screen's right edge.</summary>
+    public double? ToolbarTop { get; set; }
+
     /// <summary>The ink choices as a pen (anything unreadable in the file falls back to the defaults).</summary>
     [JsonIgnore]
     public InkPen Pen

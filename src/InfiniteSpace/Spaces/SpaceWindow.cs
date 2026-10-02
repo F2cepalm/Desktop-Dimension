@@ -159,6 +159,9 @@ internal sealed partial class SpaceWindow : IDisposable
     /// <summary>Colour and width of the next paint stroke (one being painted keeps the pen it started with).</summary>
     public InkPen Pen { get; set; } = InkPen.Default;
 
+    /// <summary>What the mouse does here (set for every space by <see cref="SpaceManager.SetTool"/>).</summary>
+    public Tool Tool { get; set; } = Tool.Hand;
+
     /// <summary>
     /// Where notes are drawn on screen (DIPs) while the space is being moved and reshaped, when that
     /// is not simply where the record's mapping puts them (text stays put while the space is

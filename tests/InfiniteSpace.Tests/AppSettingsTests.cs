@@ -78,6 +78,33 @@ public sealed class AppSettingsTests : IDisposable
     }
 
     [Fact]
+    public void SettingsSavedBeforeTools_ShowTheToolbar_WithDefaultHotkeyAndPlace()
+    {
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(Path.Combine(_directory, "settings.json"), """{"Theme":"Ocean"}""");
+
+        var loaded = AppSettings.Load(_directory);
+
+        Assert.True(loaded.ShowToolbar);
+        Assert.Null(loaded.ToolWheelHotkey);
+        Assert.Null(loaded.ToolbarLeft);
+        Assert.Null(loaded.ToolbarTop);
+    }
+
+    [Fact]
+    public void ToolSettings_AreSaved()
+    {
+        new AppSettings { ShowToolbar = false, ToolWheelHotkey = "Ctrl+Shift+Alt+T", ToolbarLeft = 120.5, ToolbarTop = 300 }.Save(_directory);
+
+        var loaded = AppSettings.Load(_directory);
+
+        Assert.False(loaded.ShowToolbar);
+        Assert.Equal("Ctrl+Shift+Alt+T", loaded.ToolWheelHotkey);
+        Assert.Equal(120.5, loaded.ToolbarLeft);
+        Assert.Equal(300, loaded.ToolbarTop);
+    }
+
+    [Fact]
     public void TheInkPen_IsSaved()
     {
         new AppSettings { Pen = new Spaces.InkPen("#9B6DFF", 8, 32) }.Save(_directory);

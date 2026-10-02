@@ -77,6 +77,23 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         PenChanged?.Invoke(pen);
     }
 
+    /// <summary>What the mouse does on spaces now (the hand to start with).</summary>
+    public Tool Tool { get; private set; } = Tool.Hand;
+
+    /// <summary>The tool changed (a key over a space, the wheel, the toolbar, or a screen-wide tool ending).</summary>
+    public event Action<Tool>? ToolChanged;
+
+    /// <summary>Makes <paramref name="tool"/> what the mouse does on every space from now on.</summary>
+    public void SetTool(Tool tool)
+    {
+        if (tool == Tool)
+            return;
+        Tool = tool;
+        foreach (var space in _spaces)
+            space.Window.Tool = tool;
+        ToolChanged?.Invoke(tool);
+    }
+
     /// <summary>The windows of the spaces that are open (diagnostics and tests).</summary>
     internal IEnumerable<SpaceWindow> Windows => _spaces.Select(s => s.Window);
 
@@ -554,7 +571,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     {
         var shape = SpaceGeometry.Decode(record);
         var outline = SpaceGeometry.Transform(shape, toScreen);
-        var window = new SpaceWindow(record, outline, host, universe.Gpu, Theme, toScreen: toScreen) { Pen = Pen };
+        var window = new SpaceWindow(record, outline, host, universe.Gpu, Theme, toScreen: toScreen) { Pen = Pen, Tool = Tool };
         var space = new Space(record, shape, window, toScreen);
         window.InkChanged += _ =>
         {
