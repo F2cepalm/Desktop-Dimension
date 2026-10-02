@@ -2,6 +2,9 @@ using System.Windows.Media;
 
 namespace InfiniteSpace.Rendering;
 
+/// <summary>Colours and shape of the tool wheel and the toolbar in a theme (see <see cref="Themes.ChromeOf"/>).</summary>
+internal sealed record ToolChrome(Color Back, Color Edge, Color Fore, Color Accent, double EdgeWidth, double Corner);
+
 /// <summary>The looks a space can have, as offered in the tray menu.</summary>
 internal static class Themes
 {
@@ -64,6 +67,19 @@ internal static class Themes
         Ocean => Color.FromRgb(0xFF, 0xE9, 0x8A),     // a glint of sun
         Void => Color.FromRgb(0x9B, 0xD3, 0xFF),      // pale blue
         _ => Color.FromRgb(0x5F, 0xCD, 0xE4),         // Dreamy: a cyan star
+    };
+
+    /// <summary>How the tool wheel and the toolbar are dressed in a theme: a small piece of the theme itself.</summary>
+    public static ToolChrome ChromeOf(string theme) => theme switch
+    {
+        Claudish => new(ClaudishStyle.Clay, ClaudishStyle.Ink, ClaudishStyle.Ink, ClaudishStyle.Paper, 2.5, 7),
+        Glory => new(Color.FromRgb(0x24, 0x18, 0x08), Color.FromRgb(0xFF, 0xC6, 0x5C), GloryLook.Ink, Color.FromRgb(0xFF, 0xC6, 0x5C), 1.5, 6),
+        Burn => new(Color.FromRgb(0x1E, 0x07, 0x05), Color.FromRgb(0xFF, 0x9A, 0x3C), BurnLook.Ink, Color.FromRgb(0xFF, 0x9A, 0x3C), 1.5, 6),
+        Sunday => new(Color.FromRgb(0xF7, 0xD9, 0xCF), Color.FromRgb(0xB8, 0x3B, 0x5B), SundayLook.Ink, Color.FromRgb(0xB8, 0x3B, 0x5B), 1.5, 8),
+        Parallax => new(Color.FromRgb(0xB7, 0xC4, 0xAE), Color.FromRgb(0x2E, 0x6B, 0x3A), ParallaxLook.Ink, Color.FromRgb(0x2E, 0x6B, 0x3A), 1.5, 6),
+        Ocean => new(Color.FromRgb(0x0E, 0x6F, 0x80), Colors.White, Colors.White, Color.FromRgb(0xFF, 0xE9, 0x8A), 1.5, 8),
+        Void => new(Colors.Black, Colors.White, Colors.White, Color.FromRgb(0x9B, 0xD3, 0xFF), 1, 0),
+        _ => new(Colors.Black, Colors.White, Colors.White, Color.FromRgb(0x5F, 0xCD, 0xE4), 2, 0), // Dreamy: a dream block, square like its pixels
     };
 
     /// <summary>A look for one space in this theme.</summary>

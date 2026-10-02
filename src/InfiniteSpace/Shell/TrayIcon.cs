@@ -7,6 +7,8 @@ using WinForms = System.Windows.Forms;
 namespace InfiniteSpace.Shell;
 
 internal sealed record TrayActions(
+    Action Wheel,
+    Func<string?> WheelHotkey,
     Action Draw,
     Action Block,
     Action Move,
@@ -44,7 +46,10 @@ internal sealed class TrayIcon : IDisposable
             theme.DropDownItems.Add(option);
         }
 
+        var wheel = Item("Tool wheel", null, actions.Wheel);
+
         var menu = new WinForms.ContextMenuStrip();
+        menu.Items.Add(wheel);
         menu.Items.Add(Item("Draw a space", "Ctrl+Alt+S", actions.Draw));
         menu.Items.Add(Item("Spawn a block", "Ctrl+Alt+B", actions.Block));
         menu.Items.Add(Item("Draw on the screen", null, actions.DrawOnScreen));
@@ -64,6 +69,7 @@ internal sealed class TrayIcon : IDisposable
         menu.Items.Add(Item("Exit", null, actions.Exit));
         menu.Opening += (_, _) =>
         {
+            wheel.ShortcutKeyDisplayString = actions.WheelHotkey();
             autostart.Checked = actions.IsAutoStartEnabled();
             string current = actions.CurrentTheme();
             foreach (WinForms.ToolStripMenuItem option in theme.DropDownItems)

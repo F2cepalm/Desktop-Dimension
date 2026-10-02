@@ -47,6 +47,8 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         spaces.RestoreAll();
 
         _tray = new TrayIcon(new TrayActions(
+            Wheel: ToggleWheel,
+            WheelHotkey: () => _wheelHotkey,
             Draw: () => { IntPtr host = Foreground.CaptureHost(); ShowOverlay(new CanvasOverlay(OverlayMode.Draw, spaces, universe, host), host); },
             Block: () => { IntPtr host = Foreground.CaptureHost(); ShowOverlay(new BlockOverlay(spaces, universe, host), host); },
             Move: () => ShowOverlay(new MoveOverlay(spaces, universe), IntPtr.Zero),
@@ -74,6 +76,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
             unavailable.Add("Ctrl+Alt+M");
         if (_hotkeys.Register(ModifierKeys.Control | ModifierKeys.Alt, Key.E, RemoveSpace) is null)
             unavailable.Add("Ctrl+Alt+E");
+        RegisterWheelHotkey(unavailable);
 
         _undoKeys =
         [
@@ -102,7 +105,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         }
         else if (spaces.Count == 0)
         {
-            _tray.Notify("Infinite Space is running", "Press Ctrl+Alt+S and draw any shape to open a space.");
+            _tray.Notify("Infinite Space is running", $"Press {_wheelHotkey ?? "Ctrl+Alt+S"} for tools, or Ctrl+Alt+S and draw any shape to open a space.");
         }
     }
 
@@ -149,6 +152,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
     /// <param name="endsInHand">Closing it returns to the Hand (a screen-wide tool).</param>
     private void ShowOverlay(GpuOverlay overlay, IntPtr host, bool endsInHand = false)
     {
+        _wheel?.Dismiss();
         _overlay?.Dismiss();
         FadeInkTools(); // drawing, erasing or moving now
         overlay.Closed += (_, _) =>
@@ -183,7 +187,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         if (_hotkeys is null)
             return;
         bool moved = Win32.GetCursorPos(out var p) && _cursor.Sample(new Point(p.X, p.Y), _clock.Elapsed);
-        var hover = _overlay is null && !spaces.IsTyping ? spaces.HoverAtCursor() : SpaceManager.Hover.None;
+        var hover = _overlay is null && _wheel is null && !spaces.IsTyping ? spaces.HoverAtCursor() : SpaceManager.Hover.None;
         bool onSpace = hover is SpaceManager.Hover.Space or SpaceManager.Hover.Note;
         foreach (var key in _undoKeys)
             key.Hold(_hotkeys, hover != SpaceManager.Hover.None);
@@ -363,6 +367,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         _hoverTimer.Stop();
         _frameStats?.Dispose();
         _windowEvents?.Dispose();
+        _wheel?.Dismiss();
         _overlay?.Dismiss();
         _palette?.Dismiss();
         _hotkeys?.Dispose();
