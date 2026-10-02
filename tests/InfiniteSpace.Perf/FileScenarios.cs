@@ -189,23 +189,16 @@ internal static class FileScenarios
             Ui.Mouse(window.Handle, WM_LBUTTONUP, at);
             results.Add(timer.Finish());
             var after = record.Notes.Single(pick);
-            if (name == "text")
-            {
-                Check(after != before && Math.Abs(after.X - before.X - 180) < 0.5 && Math.Abs(after.Y - before.Y - 90) < 0.5 && after.Text == before.Text,
-                    $"the text moved with the mouse ({after.X - before.X:0.#}, {after.Y - before.Y:0.#})");
-                Check(record.Strokes.Count == 0, "dragging the text left no paint");
-            }
-            else
-            {
-                // An opened file moves only while edited (E); the hand doesn't paint.
-                Check(after == before, "the file stays put when dragged outside edit mode");
-                Check(record.Strokes.Count == 0, "dragging an opened file with the hand leaves no paint");
-            }
+            // With the hand, opened files move like any note.
+            Check(after != before && Math.Abs(after.X - before.X - 180) < 0.5 && Math.Abs(after.Y - before.Y - 90) < 0.5 && after.Text == before.Text,
+                $"the {name} moved with the mouse ({after.X - before.X:0.#}, {after.Y - before.Y:0.#})");
+            Check(record.Strokes.Count == 0, $"dragging the {name} left no paint");
         }
         options.Picture(window.Handle, $"notes-{theme}");
 
         var text = record.Notes.Single(n => n.File is null);
-        bench.Spaces.Undo(window.Handle); // the move
+        bench.Spaces.Undo(window.Handle); // the file's move
+        bench.Spaces.Undo(window.Handle); // the text's move
         Check(record.Strokes.Count == 0 && record.Notes.Single(n => n.File is null) == text.Previous, "undo puts the text back where it was");
         Ui.Pump(300);
         var saved = bench.Store.Load().Single();

@@ -141,8 +141,11 @@ internal sealed partial class SpaceWindow : IDisposable
         None,
         Pressed,
         Painting,
-        MovingNote,
         TextPressed,
+        HandOnInk,
+        HandOnEmpty,
+        MovingSelection,
+        Marquee,
     }
 
     public IntPtr Handle => _source.Handle;
@@ -168,7 +171,14 @@ internal sealed partial class SpaceWindow : IDisposable
     public Tool Tool
     {
         get => _tool;
-        set => _tool = value; // Phase 3: leaving the hand clears the selection
+        set
+        {
+            if (_tool == value)
+                return;
+            _tool = value;
+            if (EffectiveTool != Tool.Hand)
+                ClearSelection();
+        }
     }
 
     /// <summary>The tool as it acts here: the pen and text as picked, everything else as the hand.</summary>
@@ -438,6 +448,7 @@ internal sealed partial class SpaceWindow : IDisposable
             return;
         if (_record.Strokes.Count == 0 && _record.Notes.Count == 0)
         {
+            _selected.Clear(); // nothing left to select
             DropInk();
             return;
         }
@@ -450,8 +461,12 @@ internal sealed partial class SpaceWindow : IDisposable
     }
 
     /// <summary>All the ink afresh: the note being edited left out, notes and strokes where they are shown, new files fading in.</summary>
-    private void DrawInk() =>
-        _inkDirty = _ink!.Redraw(_record, _toScreen, _editing, PlaceNotes, _arrivals.Count > 0 ? NoteOpacity : null, StrokePlacement);
+    private void DrawInk()
+    {
+        // Ink that is gone (undone, replaced by a move) can't stay selected.
+        _selected.RemoveWhere(i => i is InkStroke s ? !_record.Strokes.Contains(s) : !_record.Notes.Contains((TextNote)i));
+        _inkDirty = _ink!.Redraw(_record, _toScreen, _editing, PlaceNotes, _arrivals.Count > 0 ? NoteOpacity : null, PlaceStrokes, Adornments());
+    }
 
     /// <summary>
     /// Moves the space with everything on it, without redrawing anything but what depends on where
@@ -912,7 +927,7 @@ internal sealed partial class SpaceWindow : IDisposable
                 {
                     Tool.Pen => CrossCursor,
                     Tool.Text => IBeamCursor,
-                    _ => NoteUnderCursor() is null ? ArrowCursor : MoveCursor,
+                    _ => InkUnderCursor() is null ? ArrowCursor : MoveCursor,
                 });
                 handled = true;
                 return new IntPtr(1);
@@ -922,37 +937,60 @@ internal sealed partial class SpaceWindow : IDisposable
             {
                 var at = ToScreen(lParam);
                 handled = true;
-                // A double-click on an opened file's name opens the file; elsewhere it is two clicks.
-                if (msg == WM_LBUTTONDBLCLK && NoteClicked?.Invoke(this, at, NoteClick.DoubleClick) == true)
+                if (msg == WM_LBUTTONDBLCLK && DoubleClick(at))
                     break;
-                if (Contains(at))
+                if (!Contains(at))
+                    break;
+                _pressedAt = at;
+                switch (EffectiveTool)
                 {
-                    _gesture = EffectiveTool == Tool.Text ? Gesture.TextPressed : Gesture.Pressed;
-                    _pressedAt = at;
-                    _pressedNote = EffectiveTool == Tool.Hand ? NoteUnder(at) : null; // only the hand moves text
-                    Win32.SetCapture(hwnd);
+                    case Tool.Pen:
+                        _gesture = Gesture.Pressed;
+                        break;
+                    case Tool.Text:
+                        _gesture = Gesture.TextPressed;
+                        break;
+                    default:
+                        HandDown(at);
+                        break;
                 }
+                Win32.SetCapture(hwnd);
                 break;
             }
 
             case Win32.WM_MOUSEMOVE when _gesture != Gesture.None:
-                Drag(ToScreen(lParam));
+            {
+                var at = ToScreen(lParam);
+                if (_gesture is Gesture.Pressed or Gesture.Painting)
+                    Drag(at);
+                else if (_gesture != Gesture.TextPressed)
+                    HandDrag(at);
                 handled = true;
                 break;
+            }
 
             case Win32.WM_LBUTTONUP:
             {
                 var gesture = _gesture;
                 _gesture = Gesture.None; // before ReleaseCapture, which sends WM_CAPTURECHANGED
                 Win32.ReleaseCapture();
-                if (gesture == Gesture.Painting)
-                    FinishStroke();
-                else if (gesture == Gesture.MovingNote)
-                    FinishNoteMove();
-                else if (gesture == Gesture.TextPressed)
-                    TypeRequested?.Invoke(this, _pressedAt);
-                else if (gesture == Gesture.Pressed && !(EffectiveTool == Tool.Hand && IsCtrlDown() && NoteClicked?.Invoke(this, _pressedAt, NoteClick.CtrlClick) == true))
-                    _look.AddBurst(_pressedAt); // a click only splashes (Ctrl+click on a link opens it with the hand)
+                switch (gesture)
+                {
+                    case Gesture.Painting:
+                        FinishStroke();
+                        break;
+                    case Gesture.Pressed:
+                        _look.AddBurst(_pressedAt); // a click with the pen only splashes
+                        break;
+                    case Gesture.TextPressed:
+                        TypeRequested?.Invoke(this, _pressedAt);
+                        break;
+                    case Gesture.None:
+                        break;
+                    default:
+                        HandUp(gesture);
+                        break;
+                }
                 handled = true;
                 break;
             }
@@ -983,8 +1021,8 @@ internal sealed partial class SpaceWindow : IDisposable
             case Win32.WM_CAPTURECHANGED:
                 if (_gesture == Gesture.Painting)
                     FinishStroke();
-                else if (_gesture == Gesture.MovingNote)
-                    FinishNoteMove();
+                else if (_gesture is Gesture.MovingSelection or Gesture.Marquee)
+                    CancelHandDrag();
                 _gesture = Gesture.None;
                 break;
         }
@@ -993,32 +1031,11 @@ internal sealed partial class SpaceWindow : IDisposable
 
     private void Drag(Point at)
     {
-        if (_gesture == Gesture.TextPressed)
-            return;
         if (_gesture == Gesture.Pressed)
         {
             if ((at - _pressedAt).Length < DragThreshold)
                 return;
-            if (_pressedNote is { } note && _record.Notes.Contains(note))
-            {
-                _gesture = Gesture.MovingNote;
-                _movingNote = note;
-                PaintingStarted?.Invoke(this); // the palette and text boxes get out of the way, as for paint
-            }
-            else if (EffectiveTool == Tool.Pen)
-            {
-                _gesture = Gesture.Painting;
-            }
-            else
-            {
-                return; // the hand doesn't paint
-            }
-        }
-        if (_gesture == Gesture.MovingNote)
-        {
-            _noteDrag = at - _pressedAt;
-            RedrawInk();
-            return;
+            _gesture = Gesture.Painting;
         }
         if (_stroke.Count == 0)
         {

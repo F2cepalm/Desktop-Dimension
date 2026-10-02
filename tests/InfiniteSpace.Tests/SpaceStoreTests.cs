@@ -111,6 +111,40 @@ public sealed class SpaceStoreTests : IDisposable
     }
 
     [Fact]
+    public void MovesAndGroups_AreSavedWithTheSpace()
+    {
+        var group = Guid.NewGuid();
+        var before = new InkStroke { Points = [1, 2], Order = 1 };
+        var space = new SpaceRecord
+        {
+            Figures = [[0, 0, 10, 0, 10, 10]],
+            Strokes = [new InkStroke { Points = [5, 6], Order = 2, Group = group, Previous = before }],
+            Notes = [new TextNote { Text = "hi", Group = group, Order = 3 }],
+        };
+
+        CreateStore().Save([space]);
+        var restored = Assert.Single(CreateStore().Load());
+
+        Assert.Equal(group, restored.Strokes[0].Group);
+        Assert.Equal([1.0, 2.0], restored.Strokes[0].Previous!.Points);
+        Assert.Equal(group, restored.Notes[0].Group);
+    }
+
+    [Fact]
+    public void InkSavedBeforeMovesAndGroups_HasNone()
+    {
+        var store = CreateStore();
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(store.FilePath, """{"Version":1,"Spaces":[{"Figures":[[0,0,10,0,10,10]],"Strokes":[{"Points":[1,2]}],"Notes":[{"Text":"hi"}]}]}""");
+
+        var restored = Assert.Single(store.Load());
+
+        Assert.Null(restored.Strokes[0].Group);
+        Assert.Null(restored.Strokes[0].Previous);
+        Assert.Null(restored.Notes[0].Group);
+    }
+
+    [Fact]
     public void CorruptFile_StartsEmptyAndKeepsACopy()
     {
         var store = CreateStore();

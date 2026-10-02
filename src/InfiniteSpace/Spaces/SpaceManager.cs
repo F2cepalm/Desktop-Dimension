@@ -358,16 +358,17 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
             space.Window.Restack();
     }
 
-    /// <summary>Ctrl+Z over a space: takes back its newest paint stroke or note.</summary>
+    /// <summary>Ctrl+Z over a space: takes back its newest change (a stroke, a note, or one move of several).</summary>
     /// <returns>false when the window is not a space or its canvas is empty.</returns>
     public bool Undo(IntPtr window)
     {
-        var space = Find(window);
-        var ink = space?.Record.TakeNewestInk();
-        if (space is null || ink is null)
+        if (Find(window) is not { } space)
+            return false;
+        var batch = space.Record.TakeNewestBatch();
+        if (batch.Length == 0)
             return false;
 
-        space.Redo.Push(ink);
+        space.Redo.Push(batch);
         space.Window.RedrawInk();
         Persist();
         return true;
@@ -377,11 +378,68 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     public bool Redo(IntPtr window)
     {
         var space = Find(window);
-        if (space is null || !space.Redo.TryPop(out var ink))
+        if (space is null || !space.Redo.TryPop(out var batch))
             return false;
 
-        space.Record.PutBack(ink);
+        foreach (var ink in batch.Reverse())
+            space.Record.PutBack(ink);
         space.Window.RedrawInk();
+        Persist();
+        return true;
+    }
+
+    /// <summary>
+    /// Strokes and notes dragged across their space by <paramref name="by"/> (screen DIPs): each gets a new
+    /// version in its new place, all with one order, so one undo takes the whole move back.
+    /// </summary>
+    private void MoveInk(Space space, IReadOnlyList<IInk> items, Vector by)
+    {
+        var live = items.Where(i => i is InkStroke s ? space.Record.Strokes.Contains(s) : space.Record.Notes.Contains((TextNote)i)).ToList();
+        if (!_spaces.Contains(space) || live.Count == 0)
+        {
+            space.Window.RedrawInk();
+            return;
+        }
+        long order = InkOrder.Next();
+        var toRecord = space.ToScreen;
+        if (toRecord.HasInverse)
+            toRecord.Invert();
+        var moved = new List<IInk>();
+        foreach (var item in live)
+        {
+            if (item is InkStroke stroke)
+            {
+                var copy = stroke.MovedBy(by, order);
+                space.Record.Replace(stroke, copy);
+                moved.Add(copy);
+            }
+            else if (item is TextNote note)
+            {
+                // Notes are placed through the whole mapping (strokes only through its shift).
+                var at = toRecord.Transform(space.ToScreen.Transform(new Point(note.X, note.Y)) + by);
+                var copy = note.MovedTo(at, order);
+                space.Window.Adopt(note, copy); // a long file isn't laid out again
+                space.Record.Replace(note, copy);
+                moved.Add(copy);
+            }
+        }
+        space.Redo.Clear();
+        space.Window.Select(moved); // the selection follows the new versions (this redraws)
+        Persist();
+    }
+
+    /// <summary>Whether the space under the mouse has a selection (Ctrl+G and Ctrl+Shift+G belong to it then).</summary>
+    public bool HasSelectionUnderCursor() => HoveredSpace(out _)?.Window.HasSelection == true;
+
+    /// <summary>Ctrl+G (or Ctrl+Shift+G with <paramref name="group"/> false) over a space: its selection becomes one group, or none.</summary>
+    public bool GroupUnderCursor(bool group)
+    {
+        if (HoveredSpace(out _) is not { } space || space.Window.Selected.Count < (group ? 2 : 1))
+            return false;
+        Guid? id = group ? Guid.NewGuid() : null;
+        foreach (var item in space.Window.Selected)
+            item.Group = id;
+        space.Window.RedrawInk(); // one frame round the group now
         Persist();
         return true;
     }
@@ -583,8 +641,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         window.Wheel += (_, at, delta) => OnWheel(space, at, delta);
         window.ScrollSettled += _ => Persist(); // where it was scrolled to comes back next time
         window.NoteClicked = (_, at, click) => OnNoteClicked(space, at, click);
-        window.NoteAt = (_, at) => NoteAt(space, at) is { File: null } note ? note : null; // opened files move only while edited (E)
-        window.NoteMoved += (_, note, by) => MoveNote(space, note, by);
+        window.EditRequested += (_, note, at) => BeginText(space, at, note);
+        window.SelectionMoved += (_, items, by) => MoveInk(space, items, by);
         window.TextDropped += (_, text, at) => DropText(space, text, at);
         window.HostClosed += _ => _dispatcher.BeginInvoke(DispatcherPriority.Normal, () => OnHostClosed(space)); // not mid-frame
         _spaces.Add(space);
@@ -819,8 +877,11 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         if (m.IsIdentity && placeNote is null && placeStroke is null)
             return;
         space.Record.Transform(m, placeNote, placeStroke);
-        foreach (var ink in space.Redo)
-            SpaceRecord.TransformInk(ink, m, placeNote, placeStroke, space.Record.Anchor);
+        foreach (var batch in space.Redo)
+        {
+            foreach (var ink in batch)
+                SpaceRecord.TransformInk(ink, m, placeNote, placeStroke, space.Record.Anchor);
+        }
         if (space.Record.Host is { } host)
             host.Frame = Rect.Transform(host.Frame, m);
         space.Shape = SpaceGeometry.Decode(space.Record);
@@ -910,6 +971,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
 
         if (editing is not null && SameNote(editing, typed))
             return; // closed without changes
+        typed.Group = editing?.Group; // editing doesn't take a note out of its group
         typed.Order = InkOrder.Next();
         if (editing is null)
         {
@@ -1067,7 +1129,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
 
         public SpaceWindow Window { get; } = window;
 
-        /// <summary>Ink taken back by undo, newest on top; lives for this session only.</summary>
-        public Stack<IInk> Redo { get; } = new();
+        /// <summary>Changes taken back by undo (each one or more items), newest on top; lives for this session only.</summary>
+        public Stack<IInk[]> Redo { get; } = new();
     }
 }

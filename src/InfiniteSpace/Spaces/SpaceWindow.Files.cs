@@ -51,31 +51,8 @@ internal sealed partial class SpaceWindow
     /// </summary>
     public Func<SpaceWindow, Point, NoteClick, bool>? NoteClicked { get; set; }
 
-    /// <summary>The note at a screen DIP point that a press there moves, if it travels (null: the press paints).</summary>
-    public Func<SpaceWindow, Point, TextNote?>? NoteAt { get; set; }
-
-    /// <summary>A note was dragged to a new place: by this much on screen (DIPs). Not raised for a note that didn't move.</summary>
-    public event Action<SpaceWindow, TextNote, Vector>? NoteMoved;
-
     /// <summary>Text was dropped on the space (from another app), at this screen DIP point.</summary>
     public event Action<SpaceWindow, string, Point>? TextDropped;
-
-    private TextNote? _pressedNote;   // the note under the press, which moves if the press travels
-    private TextNote? _movingNote;    // the note following the mouse
-    private Vector _noteDrag;         // how far it has been dragged
-    private Func<TextNote, Point>? _placeMoving;
-
-    private TextNote? NoteUnder(Point at) => NoteAt?.Invoke(this, at) is { } note && note != _editing ? note : null;
-
-    private TextNote? NoteUnderCursor() =>
-        NoteAt is not null && Win32.GetCursorPos(out var p) ? NoteUnder(new Point(p.X / Dpi.Scale, p.Y / Dpi.Scale)) : null;
-
-    /// <summary>Where notes are drawn: <see cref="NotePlacement"/>'s, with the one being dragged along by the drag.</summary>
-    private Func<TextNote, Point>? PlaceNotes => _movingNote is null ? NotePlacement : _placeMoving ??= note =>
-    {
-        var at = NotePlacement?.Invoke(note) ?? _toScreen.Transform(new Point(note.X, note.Y));
-        return note == _movingNote ? at + _noteDrag : at;
-    };
 
     /// <summary>
     /// <paramref name="to"/> takes <paramref name="from"/>'s place with the same text (moved): it keeps
@@ -87,19 +64,6 @@ internal sealed partial class SpaceWindow
         _ink?.Adopt(from, to);
         if (_scrolls.Remove(from, out double target))
             _scrolls[to] = target;
-    }
-
-    /// <summary>The dragged note is let go: where it was dropped becomes its place.</summary>
-    private void FinishNoteMove()
-    {
-        var note = _movingNote;
-        var drag = _noteDrag;
-        _movingNote = _pressedNote = null;
-        _noteDrag = default;
-        if (note is not null && drag.Length >= 0.01 && NoteMoved is not null)
-            NoteMoved(this, note, drag); // the new version is drawn in its place
-        else
-            RedrawInk();
     }
 
     /// <summary>Where a file is gliding to, or where it is if it isn't (for the next notch of the wheel).</summary>

@@ -16,6 +16,7 @@ internal enum ToolSource
 internal sealed partial class ShellController
 {
     private HoverKey[] _toolKeys = [];
+    private HoverKey[] _groupKeys = [];
 
     /// <summary>Picks a tool (see the plan's decisions D2–D5).</summary>
     private void SelectTool(Tool tool, ToolSource source)

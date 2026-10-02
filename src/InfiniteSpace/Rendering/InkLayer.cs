@@ -10,6 +10,9 @@ using Vector2 = System.Numerics.Vector2;
 
 namespace InfiniteSpace.Rendering;
 
+/// <summary>What the hand shows over the ink (screen DIPs): a dashed frame round each selected group or item, and the selection rectangle being dragged.</summary>
+internal sealed record InkAdornments(IReadOnlyList<Rect> Frames, Rect? Marquee, Color Accent);
+
 /// <summary>
 /// Paint and text on a space, drawn with Direct2D at device resolution (crisp, unlike the pixel-art
 /// void) and clipped to the space's outline. The ink lives in a GPU bitmap: it is only redrawn when
@@ -44,6 +47,7 @@ internal sealed class InkLayer : IDisposable
     private ID2D1Bitmap1? _ink;
     private ID2D1Bitmap1? _mask;
     private ID2D1StrokeStyle? _round;
+    private ID2D1StrokeStyle? _dashed;
     private int _capacityWidth;
     private int _capacityHeight;
     private Point _origin;
@@ -114,7 +118,8 @@ internal sealed class InkLayer : IDisposable
     /// <returns>The changed area: all of it.</returns>
     /// <param name="opacity">How opaque each note is drawn (newly opened files fade in); fully, when null.</param>
     /// <param name="placeStroke">How each stroke is mapped onto the screen, when not where <paramref name="toScreen"/> places it (see <see cref="InkStroke.Placed"/>).</param>
-    public Int32Rect Redraw(SpaceRecord record, Matrix toScreen = default, TextNote? skip = null, Func<TextNote, Point>? placeNote = null, Func<TextNote, float>? opacity = null, Func<InkStroke, Matrix>? placeStroke = null)
+    /// <param name="adornments">The hand's selection frames and rectangle, drawn over the ink; none when null.</param>
+    public Int32Rect Redraw(SpaceRecord record, Matrix toScreen = default, TextNote? skip = null, Func<TextNote, Point>? placeNote = null, Func<TextNote, float>? opacity = null, Func<InkStroke, Matrix>? placeStroke = null, InkAdornments? adornments = null)
     {
         _pending.Clear();
         _generation++;
@@ -145,6 +150,8 @@ internal sealed class InkLayer : IDisposable
             if (alpha < 1)
                 context.PopLayer();
         }
+        if (adornments is not null)
+            DrawAdornments(context, adornments, world);
         context.PopAxisAlignedClip();
         End(context);
         ForgetUnused();
@@ -259,9 +266,29 @@ internal sealed class InkLayer : IDisposable
         foreach (var fade in _fades.Values)
             fade.Dispose();
         _fades.Clear();
+        _dashed?.Dispose();
         _round?.Dispose();
         _ink?.Dispose();
         _mask?.Dispose();
+    }
+
+    /// <summary>The selection: a dashed frame in the accent colour round each selected group or item, and the rectangle being dragged.</summary>
+    private void DrawAdornments(ID2D1DeviceContext context, InkAdornments adornments, Matrix3x2 world)
+    {
+        context.Transform = world;
+        var accent = Brush(context, adornments.Accent);
+        _dashed ??= _gpu.D2DFactory.CreateStrokeStyle(new StrokeStyleProperties { DashStyle = Vortice.Direct2D1.DashStyle.Custom }, [4, 3]);
+        foreach (var frame in adornments.Frames)
+            context.DrawRectangle(R(frame), accent, 1.25f, _dashed);
+        if (adornments.Marquee is { } marquee)
+        {
+            var c = adornments.Accent;
+            using var fill = context.CreateSolidColorBrush(new Color4(c.R / 255f, c.G / 255f, c.B / 255f, 0.12f));
+            context.FillRectangle(R(marquee), fill);
+            context.DrawRectangle(R(marquee), accent, 1.25f, _dashed);
+        }
+
+        static RawRectF R(Rect r) => new((float)r.Left, (float)r.Top, (float)r.Right, (float)r.Bottom);
     }
 
     /// <summary>From screen DIPs to this layer's pixels.</summary>

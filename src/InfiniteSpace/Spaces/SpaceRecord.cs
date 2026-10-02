@@ -60,8 +60,12 @@ internal sealed class SpaceRecord
         switch (ink)
         {
             case InkStroke stroke:
-                TransformPoints(stroke.Points, placeStroke?.Invoke(stroke) ?? stroke.Placed(m, anchor)); // moved, never stretched
-                stroke.Revision++;
+                // Every version: undoing a move after the app was resized puts the stroke back in the right place.
+                for (var version = stroke; version is not null; version = version.Previous)
+                {
+                    TransformPoints(version.Points, placeStroke?.Invoke(version) ?? version.Placed(m, anchor)); // moved, never stretched
+                    version.Revision++;
+                }
                 break;
             case TextNote note:
                 for (var version = note; version is not null; version = version.Previous)
@@ -105,6 +109,8 @@ internal sealed class SpaceRecord
         }
         var takenStroke = Strokes[stroke];
         Strokes.RemoveAt(stroke);
+        if (takenStroke.Previous is { } before)
+            Strokes.Add(before);
         return takenStroke;
     }
 
@@ -114,6 +120,8 @@ internal sealed class SpaceRecord
         switch (ink)
         {
             case InkStroke stroke:
+                if (stroke.Previous is { } before)
+                    Strokes.Remove(before);
                 Strokes.Add(stroke);
                 break;
             case TextNote note:
@@ -135,6 +143,39 @@ internal sealed class SpaceRecord
         Notes.Add(edited);
     }
 
+    /// <summary>Replaces a stroke with its moved version, which remembers the stroke so that undo can bring it back.</summary>
+    public void Replace(InkStroke stroke, InkStroke moved)
+    {
+        Strokes.Remove(stroke);
+        moved.Previous = stroke;
+        Strokes.Add(moved);
+    }
+
+    /// <summary>
+    /// Takes back the newest change: every stroke and note that shares the newest order (a move of
+    /// several things is one change). Ink from before ordering existed (order 0) goes one at a time.
+    /// </summary>
+    /// <returns>Empty when the space has no ink.</returns>
+    public IInk[] TakeNewestBatch()
+    {
+        if (TakeNewestInk() is not { } first)
+            return [];
+        var batch = new List<IInk> { first };
+        while (first.Order != 0 && NewestOrder() == first.Order)
+            batch.Add(TakeNewestInk()!);
+        return [.. batch];
+    }
+
+    private long NewestOrder()
+    {
+        long newest = -1;
+        foreach (var stroke in Strokes)
+            newest = Math.Max(newest, stroke.Order);
+        foreach (var note in Notes)
+            newest = Math.Max(newest, note.Order);
+        return newest;
+    }
+
     /// <summary>Newest by <see cref="IInk.Order"/>; on a tie (ink saved before ordering) the later one.</summary>
     private static int IndexOfNewest<T>(List<T> items) where T : IInk
     {
@@ -153,6 +194,9 @@ internal interface IInk
 {
     /// <summary>When it was added (see <see cref="InkOrder"/>); 0 for ink saved before ordering existed.</summary>
     long Order { get; set; }
+
+    /// <summary>Items with the same group are selected and moved together (Ctrl+G); null for none.</summary>
+    Guid? Group { get; set; }
 }
 
 internal static class InkOrder
@@ -166,6 +210,14 @@ internal static class InkOrder
 internal sealed class InkStroke : IInk
 {
     public long Order { get; set; }
+
+    /// <inheritdoc/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? Group { get; set; }
+
+    /// <summary>The stroke as it was before it was moved into this one; undo brings it back.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public InkStroke? Previous { get; set; }
 
     public const double DefaultThickness = 3;
 
@@ -236,11 +288,27 @@ internal sealed class InkStroke : IInk
         }
         return new InkStroke { Points = xy, Thickness = pen.Thickness, Color = pen.Color, Order = InkOrder.Next() };
     }
+
+    /// <summary>A new version of the stroke, moved by <paramref name="by"/> (strokes are only ever moved on screen, never scaled, so a screen offset is the record's too).</summary>
+    public InkStroke MovedBy(Vector by, long order)
+    {
+        var xy = new double[Points.Length];
+        for (int i = 0; i + 1 < xy.Length; i += 2)
+        {
+            xy[i] = Math.Round(Points[i] + by.X, 2);
+            xy[i + 1] = Math.Round(Points[i + 1] + by.Y, 2);
+        }
+        return new InkStroke { Points = xy, Thickness = Thickness, Color = Color, Group = Group, Order = order };
+    }
 }
 
 internal sealed class TextNote : IInk
 {
     public long Order { get; set; }
+
+    /// <inheritdoc/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? Group { get; set; }
 
     public const double DefaultFontSize = 16;
 
@@ -276,6 +344,22 @@ internal sealed class TextNote : IInk
     /// of the file's, so it outlives the file. Null for typed notes.
     /// </summary>
     public NoteFile? File { get; set; }
+
+    /// <summary>A new version of the note at another place (record coordinates), with the same text, look and group.</summary>
+    public TextNote MovedTo(Point at, long order) => new()
+    {
+        X = Math.Round(at.X, 2),
+        Y = Math.Round(at.Y, 2),
+        Text = Text,
+        FontSize = FontSize,
+        Color = Color,
+        Width = Width,
+        Bold = Bold,
+        Italic = Italic,
+        File = File?.Copy(), // the same text: kept where it is
+        Group = Group,
+        Order = order,
+    };
 }
 
 /// <summary>

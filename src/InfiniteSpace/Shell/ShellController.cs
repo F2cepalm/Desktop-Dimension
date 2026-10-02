@@ -81,6 +81,11 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         _toolKeys = [.. ToolCatalog.All
             .Where(t => t.Key is not null)
             .Select(t => new HoverKey(ModifierKeys.None, t.Key!.Value, () => SelectTool(t.Tool, ToolSource.SpaceKey)))];
+        _groupKeys =
+        [
+            new(ModifierKeys.Control, Key.G, () => spaces.GroupUnderCursor(group: true)),
+            new(ModifierKeys.Control | ModifierKeys.Shift, Key.G, () => spaces.GroupUnderCursor(group: false)),
+        ];
         _editKey = new(ModifierKeys.None, Key.E, () => StartTyping(spaces.EditAtCursor));
         _hoverTimer.Tick += (_, _) => UpdateHoverKeys();
         _hoverTimer.Start();
@@ -162,7 +167,8 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
     /// <summary>
     /// Keys that belong to a space while the mouse is on it, and to the focused app the rest of the
     /// time: they are registered as hotkeys only while hovering. Over a space: Ctrl+Z / Ctrl+Y (undo,
-    /// redo) and H, P, T, C (pick a tool). Over its text with the hand, also E (edit that note). None
+    /// redo), H, P, T, C (pick a tool), and Ctrl+G / Ctrl+Shift+G while it has a selection. Over its
+    /// text with the hand, also E (edit that note). None
     /// while an overlay or a text box is open, so the keys type as usual there.
     /// </summary>
     /// <remarks>
@@ -182,6 +188,9 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         foreach (var key in _toolKeys)
             key.Hold(_hotkeys, moved && onSpace);
         _editKey?.Hold(_hotkeys, moved && hover == SpaceManager.Hover.Note && spaces.Tool == Tool.Hand);
+        bool selection = hover != SpaceManager.Hover.None && spaces.HasSelectionUnderCursor();
+        foreach (var key in _groupKeys)
+            key.Hold(_hotkeys, selection);
     }
 
     /// <summary>T or E: opens a text box, and gives the keys back at once so that the very next one types.</summary>

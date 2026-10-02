@@ -121,4 +121,60 @@ public class InkHistoryTests
         Assert.True(a < b && b < c);
         Assert.True(a >= DateTime.UtcNow.AddMinutes(-1).Ticks, "orders are wall-clock based");
     }
+
+    [Fact]
+    public void AMoveOfAStrokeAndANote_IsOneUndo_AndRedoPutsItBack()
+    {
+        var stroke = Stroke(1);
+        var note = Note(2);
+        var space = new SpaceRecord { Strokes = [stroke], Notes = [note] };
+        var movedStroke = stroke.MovedBy(new System.Windows.Vector(5, 5), 10);
+        var movedNote = note.MovedTo(new System.Windows.Point(5, 5), 10);
+        space.Replace(stroke, movedStroke);
+        space.Replace(note, movedNote);
+
+        var batch = space.TakeNewestBatch();
+
+        Assert.Equal(2, batch.Length);
+        Assert.Equal([stroke], space.Strokes);
+        Assert.Equal([note], space.Notes);
+
+        foreach (var ink in batch.Reverse())
+            space.PutBack(ink);
+        Assert.Equal([movedStroke], space.Strokes);
+        Assert.Equal([movedNote], space.Notes);
+    }
+
+    [Fact]
+    public void InkSavedBeforeOrdering_StillComesBackOneAtATime()
+    {
+        var space = new SpaceRecord { Strokes = [Stroke(0), Stroke(0)] };
+
+        Assert.Single(space.TakeNewestBatch());
+        Assert.Single(space.Strokes);
+    }
+
+    [Fact]
+    public void ATranslation_MovesAStroke_AndTheVersionBeforeItsMove()
+    {
+        var stroke = Stroke(1);
+        var space = new SpaceRecord { Strokes = [stroke] };
+        space.Replace(stroke, stroke.MovedBy(new System.Windows.Vector(10, 0), 2));
+
+        space.Transform(new System.Windows.Media.Matrix(1, 0, 0, 1, 3, 4));
+
+        Assert.Equal([14.0, 5.0], space.Strokes[0].Points);
+        Assert.Equal([4.0, 5.0], stroke.Points);
+    }
+
+    [Fact]
+    public void MovedBy_KeepsThicknessColourAndGroup()
+    {
+        var stroke = new InkStroke { Points = [1, 2, 3, 4], Thickness = 7, Color = "#FF5A5F", Group = Guid.NewGuid(), Order = 1 };
+
+        var moved = stroke.MovedBy(new System.Windows.Vector(1, -1), 2);
+
+        Assert.Equal([2.0, 1.0, 4.0, 3.0], moved.Points);
+        Assert.Equal((7.0, "#FF5A5F", stroke.Group, 2L), (moved.Thickness, moved.Color, moved.Group, moved.Order));
+    }
 }

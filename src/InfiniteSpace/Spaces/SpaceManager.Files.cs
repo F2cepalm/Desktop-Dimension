@@ -104,42 +104,6 @@ internal sealed partial class SpaceManager
         return opened.Count;
     }
 
-    /// <summary>
-    /// A note (typed, or an opened file) was dragged across its space by <paramref name="by"/> (screen
-    /// DIPs): its new place is kept as a new version of it, which undo takes back.
-    /// </summary>
-    private void MoveNote(Space space, TextNote note, Vector by)
-    {
-        if (!_spaces.Contains(space) || !space.Record.Notes.Contains(note))
-        {
-            space.Window.RedrawInk();
-            return;
-        }
-        // Moved on screen; kept in the record's coordinates (they differ while the app is stretched).
-        var toRecord = space.ToScreen;
-        if (toRecord.HasInverse)
-            toRecord.Invert();
-        var p = toRecord.Transform(space.ToScreen.Transform(new Point(note.X, note.Y)) + by);
-        var moved = new TextNote
-        {
-            X = Math.Round(p.X, 2),
-            Y = Math.Round(p.Y, 2),
-            Text = note.Text,
-            FontSize = note.FontSize,
-            Color = note.Color,
-            Width = note.Width,
-            Bold = note.Bold,
-            Italic = note.Italic,
-            File = note.File?.Copy(), // the same text: kept where it is
-            Order = InkOrder.Next(),
-        };
-        space.Window.Adopt(note, moved);
-        space.Record.Replace(note, moved);
-        space.Redo.Clear();
-        space.Window.RedrawInk();
-        Persist();
-    }
-
     /// <summary>Longest text taken from a drop, in characters (as much as a file opened on a space).</summary>
     private const int MaxDroppedText = (int)TextFiles.MaxBytes;
 
