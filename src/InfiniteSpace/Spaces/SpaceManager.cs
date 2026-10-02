@@ -520,12 +520,17 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     public MovingSpace? PickUp(Point at, IntPtr overlay)
     {
         var space = _spaces.LastOrDefault(s => !s.IsSheet && s.Window.IsShowing && s.Window.Contains(at));
-        if (space is null)
-            return null;
+        return space is null ? null : PickUp(space, overlay);
+    }
+
+    /// <param name="overlay">The window it floats just under; zero leaves it in its place among the windows (a card dragged by hand).</param>
+    private MovingSpace PickUp(Space space, IntPtr overlay)
+    {
         if (space.Stretched)
             Reshape(space); // drawn properly where it is before it goes anywhere
         space.Following = false; // it lands when it is dropped or put back, not when it keeps still
-        space.Window.Lift(overlay);
+        if (overlay != IntPtr.Zero)
+            space.Window.Lift(overlay);
         space.Moving = true;
         var moving = new MovingSpace(space, space.ToScreen, space.Outline.Bounds);
         space.NotePlacement = space.Window.NotePlacement = moving.PlaceNote;
@@ -548,6 +553,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         var space = moving.Space;
         if (!_spaces.Contains(space) || bounds.Width < 1 || bounds.Height < 1)
             return;
+        if (space.Record.Card)
+            bounds = FitCardLive(moving, bounds);
         moving.Now = bounds;
         moving.Carried = carried;
         var toScreen = Reshaped(moving.Before, moving.Bounds, bounds);
@@ -643,6 +650,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     {
         var space = moving.Space;
         space.Moving = false;
+        if (moving.CardWidthBefore is { } width && space.Record.Notes is [var note])
+            note.Width = width; // reflowed while reshaping: as it was
         space.NotePlacement = space.Window.NotePlacement = null; // text and paint back where the mapping puts them
         space.StrokePlacement = space.Window.StrokePlacement = null;
         if (!_spaces.Contains(space))
@@ -711,6 +720,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         window.NoteClicked = (_, at, click) => OnNoteClicked(space, at, click);
         window.EditRequested += (_, note, at) => BeginText(space, at, note);
         window.SelectionMoved += (_, items, by) => MoveInk(space, items, by);
+        WireCard(space);
         window.InkErased += (_, items, order) => EraseInk(space, items, order);
         window.HandPressed += pressed =>
         {
@@ -1072,6 +1082,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
             owner.Window.Editing = null; // shows the kept version in its place
             if (owner.IsSheet)
                 FitSheet(owner);
+            else if (owner.Record.Card)
+                FitCard(owner);
         }
         else
         {
@@ -1122,7 +1134,11 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
             Space = space;
             Before = before;
             Bounds = Now = bounds;
+            CardWidthBefore = space?.Record is { Card: true, Notes: [var note] } ? note.Width : null;
         }
+
+        /// <summary>A card's text width when it was picked up, which reshaping reflows (put back if it is put back).</summary>
+        internal double? CardWidthBefore { get; }
 
         internal Space Space { get; }
 
@@ -1139,8 +1155,9 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         internal Vector Carried { get; set; }
 
         /// <summary>Where a note of the space is shown now (see <see cref="SpaceManager.PlaceNote"/>).</summary>
-        internal Point PlaceNote(TextNote note) =>
-            SpaceManager.PlaceNote(NoteText.Bounds(note, Before), Bounds, Now, Carried);
+        internal Point PlaceNote(TextNote note) => Space?.Record.Card == true
+            ? Now.TopLeft + new Vector(CardPadding(note.FontSize), CardPadding(note.FontSize)) // a card's text stays inside its margins
+            : SpaceManager.PlaceNote(NoteText.Bounds(note, Before), Bounds, Now, Carried);
 
         /// <summary>
         /// How a stroke of the space is mapped onto the screen now: as it was shown when picked up,

@@ -70,6 +70,8 @@ internal sealed partial class SpaceManager
     {
         if (space.IsSheet)
             FitSheet(space);
+        else if (space.Record.Card)
+            FitCard(space);
         else
             space.Window.RedrawInk();
     }

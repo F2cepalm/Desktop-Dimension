@@ -28,6 +28,20 @@ internal sealed partial class SpaceWindow
     /// <summary>Text was double-clicked with the hand (at this screen DIP point): it should open for editing.</summary>
     public event Action<SpaceWindow, TextNote, Point>? EditRequested;
 
+    /// <summary>The hand started dragging this text card: it moves as one, space and text (see SpaceManager.Cards.cs).</summary>
+    public event Action<SpaceWindow>? CardDragStarted;
+
+    /// <summary>The card is dragged this far (screen DIPs) from where the drag started.</summary>
+    public event Action<SpaceWindow, Vector>? CardDragged;
+
+    /// <summary>The card was let go with the mouse here (screen DIPs).</summary>
+    public event Action<SpaceWindow, Point>? CardDropped;
+
+    /// <summary>The drag ended without a drop (the mouse was taken away): the card goes back.</summary>
+    public event Action<SpaceWindow>? CardDragCancelled;
+
+    private Point _cardDragFrom; // the mouse on screen when a card drag started (the window moves under it)
+
     /// <summary>The strokes and notes selected with the hand.</summary>
     public IReadOnlyCollection<IInk> Selected => _selected;
 
@@ -55,7 +69,7 @@ internal sealed partial class SpaceWindow
 
     private void HandDown(Point at)
     {
-        _pressedInk = InkHit.At(_record, _toScreen, at, _editing);
+        _pressedInk = InkAt(at);
         _gesture = _pressedInk is null ? Gesture.HandOnEmpty : Gesture.HandOnInk;
         HandPressed?.Invoke(this);
         // An unselected item is selected on the press, so it shows at once. Not with Shift (the release
@@ -66,11 +80,26 @@ internal sealed partial class SpaceWindow
 
     private void HandDrag(Point at)
     {
+        if (_gesture == Gesture.MovingCard)
+        {
+            CardDragged?.Invoke(this, MouseOnScreen() - _cardDragFrom);
+            return;
+        }
         var travel = at - _pressedAt;
         if (_gesture is Gesture.HandOnInk or Gesture.HandOnEmpty)
         {
             if (travel.Length < DragThreshold)
                 return;
+            if (_gesture == Gesture.HandOnInk && _record.Card)
+            {
+                // A card and its text are one thing: the whole space goes, not the text inside it.
+                _gesture = Gesture.MovingCard;
+                _cardDragFrom = MouseOnScreen() - travel;
+                PaintingStarted?.Invoke(this);
+                CardDragStarted?.Invoke(this);
+                CardDragged?.Invoke(this, travel);
+                return;
+            }
             if (_gesture == Gesture.HandOnInk)
             {
                 var group = InkHit.WithGroup(_record, _pressedInk!);
@@ -108,6 +137,9 @@ internal sealed partial class SpaceWindow
     {
         switch (gesture)
         {
+            case Gesture.MovingCard:
+                CardDropped?.Invoke(this, MouseOnScreen());
+                break;
             case Gesture.MovingSelection:
                 var drag = _selectionDrag;
                 _selectionDrag = default;
@@ -153,7 +185,7 @@ internal sealed partial class SpaceWindow
     {
         if (NoteClicked?.Invoke(this, at, NoteClick.DoubleClick) == true)
             return true; // an opened file's name opens the file
-        if (EffectiveTool != Tool.Hand || InkHit.At(_record, _toScreen, at, _editing) is not TextNote note)
+        if (EffectiveTool != Tool.Hand || InkAt(at) is not TextNote note)
             return false;
         EditRequested?.Invoke(this, note, at);
         return true;
@@ -172,6 +204,13 @@ internal sealed partial class SpaceWindow
 
     private IInk? InkUnderCursor() =>
         Win32.GetCursorPos(out var p) ? InkHit.At(_record, _toScreen, new Point(p.X / Dpi.Scale, p.Y / Dpi.Scale), _editing) : null;
+
+    /// <summary>The ink the hand takes at a screen point: on a text card, its text from anywhere on the card.</summary>
+    private IInk? InkAt(Point at) =>
+        InkHit.At(_record, _toScreen, at, _editing) ?? (_record is { Card: true, Notes: [var note] } && note != _editing ? note : null);
+
+    private static Point MouseOnScreen() =>
+        Win32.GetCursorPos(out var p) ? new Point(p.X / Dpi.Scale, p.Y / Dpi.Scale) : default;
 
     private void Toggle(List<IInk> items)
     {

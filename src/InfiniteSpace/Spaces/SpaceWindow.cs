@@ -144,6 +144,7 @@ internal sealed partial class SpaceWindow : IDisposable
         HandOnEmpty,
         MovingSelection,
         Marquee,
+        MovingCard,
     }
 
     public IntPtr Handle => _source.Handle;
@@ -1106,6 +1107,8 @@ internal sealed partial class SpaceWindow : IDisposable
             }
 
             case Win32.WM_CAPTURECHANGED:
+                if (_gesture == Gesture.MovingCard)
+                    CardDragCancelled?.Invoke(this);
                 if (_gesture == Gesture.Painting)
                     FinishStroke();
                 else if (_gesture is Gesture.MovingSelection or Gesture.Marquee)

@@ -35,6 +35,16 @@ public sealed class SpaceStoreTests : IDisposable
     }
 
     [Fact]
+    public void ATextCard_StaysACard()
+    {
+        CreateStore().Save([new SpaceRecord { Card = true, Notes = [new TextNote { Text = "Card" }] }, new SpaceRecord()]);
+
+        var restored = CreateStore().Load();
+
+        Assert.Equal([true, false], restored.Select(r => r.Card));
+    }
+
+    [Fact]
     public void PaintAndText_AreSavedWithTheSpace()
     {
         var space = new SpaceRecord

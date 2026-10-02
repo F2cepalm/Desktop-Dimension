@@ -79,6 +79,75 @@ internal sealed partial class SpaceManager
         return box;
     }
 
+    /// <summary>A picked-up card follows the bounds asked for as <see cref="CardBounds"/> says, its text reflowed at once.</summary>
+    private static Rect FitCardLive(MovingSpace moving, Rect bounds)
+    {
+        if (moving.Space.Record.Notes is not [{ Text.Length: > 0 } note])
+            return bounds;
+        var fitted = CardBounds(note, moving.Now, bounds);
+        note.Width = Math.Round(fitted.Width - 2 * CardPadding(note.FontSize), 2); // kept on the drop, undone if it is put back
+        return fitted;
+    }
+
+    /// <summary>
+    /// A card's bounds when <paramref name="asked"/> is asked for while it is at <paramref name="was"/>: as wide
+    /// as asked (no narrower than <see cref="MinCardWidth"/>) and as tall as its text then needs. Only moves change
+    /// its top; a card held at its narrowest keeps the side that wasn't dragged.
+    /// </summary>
+    internal static Rect CardBounds(TextNote note, Rect was, Rect asked)
+    {
+        var size = CardSize(note, asked.Width);
+        bool moved = asked.Size == was.Size;
+        double left = !moved && asked.Right == was.Right ? asked.Right - size.Width : asked.Left;
+        return new Rect(left, moved ? asked.Top : was.Top, size.Width, size.Height);
+    }
+
+    /// <summary>A card's ink changed (edited, undone, erased): it hugs its text again, from where its top-left is.</summary>
+    private static void FitCard(Space card)
+    {
+        if (card.Record.Notes is [{ Text.Length: > 0 }])
+        {
+            var bounds = card.Shape.Bounds;
+            ShapeCard(card.Record, bounds.TopLeft, bounds.Width);
+            card.Shape = SpaceGeometry.Decode(card.Record);
+        }
+        card.Stretched = false;
+        card.Shown = card.ToScreen;
+        card.Window.SetShape(card.Outline, card.ToScreen); // also redraws the ink
+    }
+
+    /// <summary>A card dragged with the hand moves as one, space and text, like a space picked up with Ctrl+Alt+M.</summary>
+    private void WireCard(Space space)
+    {
+        MovingSpace? moving = null;
+        space.Window.CardDragStarted += _ =>
+        {
+            if (_spaces.Contains(space) && !space.Moving)
+                moving = PickUp(space, overlay: IntPtr.Zero);
+        };
+        space.Window.CardDragged += (_, travel) =>
+        {
+            if (moving is not null)
+                Fit(moving, Rect.Offset(moving.Bounds, travel), travel);
+        };
+        space.Window.CardDropped += (_, at) =>
+        {
+            if (moving is null)
+                return;
+            var dropped = moving;
+            moving = null;
+            Drop(dropped, at);
+        };
+        space.Window.CardDragCancelled += _ =>
+        {
+            if (moving is null)
+                return;
+            var cancelled = moving;
+            moving = null;
+            PutBack(cancelled);
+        };
+    }
+
     private const double Grid = DreamStyle.ArtPixel;
 
     private static double SnapUp(double value) => Math.Ceiling(Math.Round(value / Grid, 6)) * Grid;
