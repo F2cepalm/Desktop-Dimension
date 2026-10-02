@@ -1070,8 +1070,13 @@ internal sealed partial class SpaceWindow : IDisposable
                 break;
             }
 
-            case Win32.WM_MOUSEMOVE when _gesture != Gesture.None:
+            case Win32.WM_MOUSEMOVE:
             {
+                // Always ours: WPF, which draws nothing here, would put the arrow back on every move,
+                // so the cursor flickered between the tool's and the arrow.
+                handled = true;
+                if (_gesture == Gesture.None)
+                    break;
                 var at = ToScreen(lParam);
                 if (_gesture is Gesture.Pressed or Gesture.Painting)
                     Drag(at);
@@ -1079,7 +1084,6 @@ internal sealed partial class SpaceWindow : IDisposable
                     EraseAlong(at);
                 else if (_gesture != Gesture.TextPressed)
                     HandDrag(at);
-                handled = true;
                 break;
             }
 
