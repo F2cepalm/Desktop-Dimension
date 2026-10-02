@@ -63,8 +63,14 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
             SetTheme: SetTheme,
             IsAutoStartEnabled: () => AutoStart.IsEnabled,
             SetAutoStart: SetAutoStart,
+            IsToolbarShown: () => _settings.ShowToolbar,
+            ShowToolbar: SetToolbarShown,
             OpenDataFolder: OpenDataFolder,
             Exit: () => Application.Current.Shutdown()));
+
+        if (_settings.ShowToolbar)
+            OpenToolbar();
+        spaces.ToolChanged += tool => _toolbar?.ShowTool(tool);
 
         _hotkeys = new GlobalHotkeys();
         var unavailable = new List<string>();
@@ -168,6 +174,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         };
         _overlay = overlay;
         overlay.Show(); // on top, with the keyboard
+        _toolbar?.BringToFront(); // above the overlay, so a tool can still be picked
     }
 
     /// <summary>
@@ -275,6 +282,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         _settings.Theme = Themes.Resolve(name);
         spaces.ApplyTheme(_settings.Theme);
         SaveSettings();
+        _toolbar?.ApplyChrome(Themes.ChromeOf(_settings.Theme));
     }
 
     /// <summary>Start with Windows is on unless the user turned it off.</summary>
@@ -370,6 +378,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         _wheel?.Dismiss();
         _overlay?.Dismiss();
         _palette?.Dismiss();
+        _toolbar?.Close();
         _hotkeys?.Dispose();
         _tray?.Dispose();
         // While the UI thread still runs: windows must be destroyed on it.

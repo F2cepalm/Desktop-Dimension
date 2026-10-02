@@ -1,3 +1,4 @@
+using System.Windows;
 using InfiniteSpace.Native;
 using InfiniteSpace.Rendering;
 using InfiniteSpace.Spaces;
@@ -22,6 +23,7 @@ internal sealed partial class ShellController
     private static readonly string[] WheelHotkeys = ["Ctrl+Alt+`", "Ctrl+Alt+W", "Win+Alt+W"];
     private ToolWheelWindow? _wheel;
     private string? _wheelHotkey;
+    private ToolbarWindow? _toolbar;
 
     /// <summary>Picks a tool (see the plan's decisions D2–D5).</summary>
     private void SelectTool(Tool tool, ToolSource source)
@@ -102,6 +104,39 @@ internal sealed partial class ShellController
         UpdateHoverKeys();
         wheel.Show();
         wheel.Activate();
+    }
+
+    /// <summary>Puts the toolbar on screen, where it was left (or at the primary screen's right edge).</summary>
+    private void OpenToolbar()
+    {
+        if (_toolbar is not null)
+            return;
+        Point? at = _settings.ToolbarLeft is { } x && _settings.ToolbarTop is { } y ? new Point(x, y) : null;
+        var toolbar = new ToolbarWindow(Themes.ChromeOf(spaces.Theme), spaces.Tool, at, () => _wheelHotkey);
+        toolbar.Picked += tool => SelectTool(tool, ToolSource.Toolbar);
+        toolbar.Moved += square =>
+        {
+            (_settings.ToolbarLeft, _settings.ToolbarTop) = (square.X, square.Y);
+            SaveSettings();
+        };
+        _toolbar = toolbar;
+        toolbar.Show();
+    }
+
+    /// <summary>Tray, Show toolbar: on or off, remembered.</summary>
+    private void SetToolbarShown(bool shown)
+    {
+        _settings.ShowToolbar = shown;
+        SaveSettings();
+        if (shown)
+        {
+            OpenToolbar();
+        }
+        else
+        {
+            _toolbar?.Close();
+            _toolbar = null;
+        }
     }
 
     /// <summary>The Space cube: a block to place, as Ctrl+Alt+B spawns; <paramref name="host"/> is the layer the new space goes on.</summary>

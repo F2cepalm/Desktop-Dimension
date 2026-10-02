@@ -14,6 +14,7 @@ namespace InfiniteSpace.Tests;
 /// What the desktop compositor really shows of a <see cref="SpaceSurface"/>, read back from a window
 /// kept off screen.
 /// </summary>
+[Collection(nameof(SurfaceTests))]
 public class SurfaceTests
 {
     [Fact]
@@ -192,3 +193,7 @@ public class SurfaceTests
         private static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int width, int height);
     }
 }
+
+/// <summary>Window hit tests at a fixed off-screen spot: run alone, so no other test's windows or styles change under them.</summary>
+[CollectionDefinition(nameof(SurfaceTests), DisableParallelization = true)]
+public sealed class SurfaceTestsCollection;

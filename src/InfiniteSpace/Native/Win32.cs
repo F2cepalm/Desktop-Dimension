@@ -140,6 +140,10 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
+    /// <summary>Whether a full-screen app, game or presentation is in front (QUNS_BUSY 2, QUNS_RUNNING_D3D_FULL_SCREEN 3, QUNS_PRESENTATION_MODE 4).</summary>
+    [DllImport("shell32.dll")]
+    public static extern int SHQueryUserNotificationState(out int state);
+
     public const int VK_LBUTTON = 0x01;
     public const int VK_RBUTTON = 0x02;
 

@@ -24,6 +24,19 @@ public class ToolChromeTests
         Assert.Equal((Colors.Black, Colors.White, 2.0, 0.0), (chrome.Back, chrome.Edge, chrome.EdgeWidth, chrome.Corner));
     }
 
+    [Fact]
+    public void TheToolbar_BuildsAndRedresses_InEveryTheme()
+    {
+        Gpu.RunOnSta(() =>
+        {
+            var toolbar = new Shell.ToolbarWindow(Themes.ChromeOf(Themes.Dreamy), Spaces.Tool.Hand, null, () => "Ctrl+Alt+`");
+            foreach (string theme in Themes.All)
+                toolbar.ApplyChrome(Themes.ChromeOf(theme));
+            toolbar.ShowTool(Spaces.Tool.Pen);
+            Assert.NotNull(toolbar.Content);
+        });
+    }
+
     /// <summary>WCAG contrast ratio of two opaque colours.</summary>
     private static double Contrast(Color a, Color b)
     {

@@ -23,6 +23,8 @@ internal sealed record TrayActions(
     Action<string> SetTheme,
     Func<bool> IsAutoStartEnabled,
     Action<bool> SetAutoStart,
+    Func<bool> IsToolbarShown,
+    Action<bool> ShowToolbar,
     Action OpenDataFolder,
     Action Exit);
 
@@ -37,6 +39,8 @@ internal sealed class TrayIcon : IDisposable
     {
         var autostart = new WinForms.ToolStripMenuItem("Start with Windows");
         autostart.Click += (_, _) => actions.SetAutoStart(!actions.IsAutoStartEnabled());
+        var toolbar = new WinForms.ToolStripMenuItem("Show toolbar");
+        toolbar.Click += (_, _) => actions.ShowToolbar(!actions.IsToolbarShown());
 
         var theme = new WinForms.ToolStripMenuItem("Theme");
         foreach (string name in actions.Themes)
@@ -63,6 +67,7 @@ internal sealed class TrayIcon : IDisposable
         menu.Items.Add(Item("Clear screen notes…", null, actions.ClearScreenNotes));
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add(theme);
+        menu.Items.Add(toolbar);
         menu.Items.Add(autostart);
         menu.Items.Add(Item("Open data folder", null, actions.OpenDataFolder));
         menu.Items.Add(new WinForms.ToolStripSeparator());
@@ -71,6 +76,7 @@ internal sealed class TrayIcon : IDisposable
         {
             wheel.ShortcutKeyDisplayString = actions.WheelHotkey();
             autostart.Checked = actions.IsAutoStartEnabled();
+            toolbar.Checked = actions.IsToolbarShown();
             string current = actions.CurrentTheme();
             foreach (WinForms.ToolStripMenuItem option in theme.DropDownItems)
                 option.Checked = option.Text == current;
