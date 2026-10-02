@@ -11,9 +11,8 @@ namespace InfiniteSpace.Shell;
 
 /// <summary>
 /// Ctrl+Alt+M: moves and reshapes a space. The space under the mouse is picked up at once (otherwise
-/// a click picks one up) and shows reshaping arrows on its sides and corners. It follows the mouse
-/// until a click sets it down; then the arrows drag to stretch it, the body drags to move it, and a
-/// click elsewhere moves it there. Throughout, arrow keys push a side out (Shift pulls it in, Ctrl for
+/// a click picks one up) and stays where it is, showing reshaping arrows on its sides and corners: the
+/// arrows drag to stretch it, the body drags to move it, and a click elsewhere moves it there. Throughout, arrow keys push a side out (Shift pulls it in, Ctrl for
 /// fine steps), Alt+arrows nudge it and the wheel scales it, as for a block. A double-click or Enter
 /// drops it on the app window under the mouse, or on the desktop. Esc, a right-click or switching
 /// away puts it back as it was.
@@ -56,7 +55,6 @@ internal sealed class MoveOverlay : GpuOverlay
     private string _sizeText = "";
     private SpaceManager.MovingSpace? _moving;
     private Rect _rect;   // the space's bounds on screen (DIPs)
-    private bool _placed; // set down: no longer follows the mouse, and the arrows take drags
     private BlockGrip _drag;
     private Point _last;  // screen DIPs
     private Vector _carried; // how far moves (not reshapes) have taken it: its text goes along
@@ -85,11 +83,8 @@ internal sealed class MoveOverlay : GpuOverlay
 
     private static string PickHint => "Click a space to pick it up   ·   Esc to cancel";
 
-    private static string FollowHint =>
-        "Click to set it down   ·   arrow keys reshape (Shift shrinks, Ctrl fine), Alt+arrows nudge, wheel scales   ·   double-click or Enter drops it   ·   Esc puts it back";
-
     private static string PlacedHint =>
-        "Drag the arrows to reshape, the body to move   ·   arrow keys reshape, Alt+arrows nudge   ·   double-click or Enter drops it   ·   Esc puts it back";
+        "Drag the arrows to reshape, the body to move   ·   arrow keys reshape (Shift shrinks, Ctrl fine), Alt+arrows nudge, wheel scales   ·   double-click or Enter drops it   ·   Esc puts it back";
 
     /// <summary>The space being moved, if one was picked up (for tests).</summary>
     internal SpaceManager.MovingSpace? Moving => _moving;
@@ -125,9 +120,7 @@ internal sealed class MoveOverlay : GpuOverlay
         var p = ToScreen(at);
         if (_moving is not null)
         {
-            if (!_placed)
-                MoveBy(p - _last);
-            else if (_drag == BlockGrip.Move)
+            if (_drag == BlockGrip.Move)
                 MoveBy(p - _last);
             else if (_drag != BlockGrip.None)
                 Fit(Contained(_rect, BlockEdit.Drag(_rect, _drag, p - _last, MinSize)));
@@ -152,15 +145,6 @@ internal sealed class MoveOverlay : GpuOverlay
             DropAt(p);
             return;
         }
-        if (!_placed)
-        {
-            _placed = true;
-            Hint = PlacedHint;
-            Layout();
-            Cursor = SystemCursors.For(BlockEdit.GripAt(_rect, p, GripMargin));
-            return;
-        }
-
         _drag = BlockEdit.GripAt(_rect, p, GripMargin);
         if (_drag == BlockGrip.None)
         {
@@ -240,8 +224,8 @@ internal sealed class MoveOverlay : GpuOverlay
             return;
         }
         _rect = _moving.Bounds;
-        Hint = FollowHint;
-        Cursor = SystemCursors.SizeAll;
+        Hint = PlacedHint;
+        Cursor = SystemCursors.For(BlockEdit.GripAt(_rect, at, GripMargin)); // it stays put: the arrows work at once
         Layout();
     }
 
@@ -287,7 +271,6 @@ internal sealed class MoveOverlay : GpuOverlay
             _arrows[i].CentreAt(new Point(x, y));
             _arrows[i].Shown = shown;
         }
-        _arrowOpacity.SetOpacity(_placed ? 1 : 0.75f); // dimmer while the space follows the mouse
         Gpu.Invalidate();
 
         string text = $"{Math.Round(_rect.Width)} × {Math.Round(_rect.Height)}";

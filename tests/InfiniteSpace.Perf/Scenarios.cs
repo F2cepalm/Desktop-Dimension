@@ -217,7 +217,7 @@ internal static class Scenarios
         return [follow.Finish(), resize.Finish()];
     }
 
-    /// <summary>Ctrl+Alt+M: a space picked up with a click, set down, then stretched by its arrows and moved by its body.</summary>
+    /// <summary>Ctrl+Alt+M: a space picked up with a click, then stretched by its arrows and moved by its body.</summary>
     private static IEnumerable<Result> DragArrows(string theme, Options options)
     {
         var bounds = new Rect(Bench.X, Bench.Y, 420, 280);
@@ -226,9 +226,7 @@ internal static class Scenarios
         overlay.Show(activate: false);
         var inside = new Point(bounds.X + 200, bounds.Y + 140);
         Ui.Mouse(overlay.Handle, WM_LBUTTONDOWN, inside); // picks it up
-        Ui.Mouse(overlay.Handle, WM_LBUTTONUP, inside);
-        Ui.Mouse(overlay.Handle, WM_LBUTTONDOWN, inside); // sets it down
-        Ui.Mouse(overlay.Handle, WM_LBUTTONUP, inside);
+        Ui.Mouse(overlay.Handle, WM_LBUTTONUP, inside); // it stays put, its arrows ready
         Check(overlay.Moving is not null, "picked up with a click");
         var right = new Point(bounds.Right, bounds.Y + bounds.Height / 2);
         Ui.Mouse(overlay.Handle, WM_LBUTTONDOWN, right);
