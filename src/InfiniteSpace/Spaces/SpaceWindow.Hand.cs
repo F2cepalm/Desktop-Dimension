@@ -15,9 +15,15 @@ internal sealed partial class SpaceWindow
     private Rect? _marquee;
     private Func<TextNote, Point>? _placeDraggedNote;
     private Func<InkStroke, Matrix>? _placeDraggedStroke;
+    private List<Rect>? _frames;         // the selection's frames before any drag (see Adornments)
+    private Matrix _framesFor;
+    private bool _framesStale = true;
 
     /// <summary>Ink was dragged to a new place by this much on screen (DIPs). Not raised for a drag that went nowhere.</summary>
     public event Action<SpaceWindow, IReadOnlyList<IInk>, Vector>? SelectionMoved;
+
+    /// <summary>The hand pressed on this space: other spaces let go of their selections, so only one shows frames (and owns Ctrl+G).</summary>
+    public event Action<SpaceWindow>? HandPressed;
 
     /// <summary>Text was double-clicked with the hand (at this screen DIP point): it should open for editing.</summary>
     public event Action<SpaceWindow, TextNote, Point>? EditRequested;
@@ -33,6 +39,7 @@ internal sealed partial class SpaceWindow
     {
         _selected.Clear();
         _selected.UnionWith(items);
+        _framesStale = true;
         RedrawInk();
     }
 
@@ -42,6 +49,7 @@ internal sealed partial class SpaceWindow
         if (_selected.Count == 0)
             return;
         _selected.Clear();
+        _framesStale = true;
         RedrawInk();
     }
 
@@ -49,8 +57,10 @@ internal sealed partial class SpaceWindow
     {
         _pressedInk = InkHit.At(_record, _toScreen, at, _editing);
         _gesture = _pressedInk is null ? Gesture.HandOnEmpty : Gesture.HandOnInk;
-        // An unselected item is selected on the press, so dragging it moves it at once.
-        if (_pressedInk is not null && !_selected.Contains(_pressedInk) && !IsShiftDown())
+        HandPressed?.Invoke(this);
+        // An unselected item is selected on the press, so it shows at once. Not with Shift (the release
+        // toggles it) nor Ctrl (a Ctrl+click on a link only opens the link).
+        if (_pressedInk is not null && !_selected.Contains(_pressedInk) && !IsShiftDown() && !IsCtrlDown())
             Select(InkHit.WithGroup(_record, _pressedInk));
     }
 
@@ -63,7 +73,10 @@ internal sealed partial class SpaceWindow
                 return;
             if (_gesture == Gesture.HandOnInk)
             {
-                _selected.UnionWith(InkHit.WithGroup(_record, _pressedInk!)); // a Shift+press on something new adds it
+                var group = InkHit.WithGroup(_record, _pressedInk!);
+                if (!_selected.Contains(_pressedInk!) && !IsShiftDown())
+                    _selected.Clear(); // dragged with Ctrl: it moves alone, as without
+                _selected.UnionWith(group); // a Shift+press on something new adds it
                 _gesture = Gesture.MovingSelection;
             }
             else
@@ -87,6 +100,7 @@ internal sealed partial class SpaceWindow
             foreach (var item in InkHit.Touching(_record, _toScreen, area, _editing))
                 _selected.UnionWith(InkHit.WithGroup(_record, item));
         }
+        _framesStale = true;
         RedrawInk();
     }
 
@@ -145,6 +159,21 @@ internal sealed partial class SpaceWindow
         return true;
     }
 
+    /// <summary>The cursor for the tool here, at the mouse.</summary>
+    private IntPtr CursorNow() => EffectiveTool switch
+    {
+        Tool.Pen or Tool.Eraser => CrossCursor,
+        Tool.Text => IBeamCursor,
+        _ => InkUnderCursor() is null ? ArrowCursor : MoveCursor,
+    };
+
+    /// <summary>Shows the tool's cursor now if the mouse is on this space (Windows only asks for it on mouse input).</summary>
+    private void RefreshCursor()
+    {
+        if (!_disposed && _gesture == Gesture.None && Win32.GetCursorPos(out var p) && Win32.WindowFromPoint(p) == Handle)
+            Win32.SetCursor(CursorNow());
+    }
+
     private IInk? InkUnderCursor() =>
         Win32.GetCursorPos(out var p) ? InkHit.At(_record, _toScreen, new Point(p.X / Dpi.Scale, p.Y / Dpi.Scale), _editing) : null;
 
@@ -154,6 +183,7 @@ internal sealed partial class SpaceWindow
             _selected.ExceptWith(items);
         else
             _selected.UnionWith(items);
+        _framesStale = true;
         RedrawInk();
     }
 
@@ -180,18 +210,26 @@ internal sealed partial class SpaceWindow
     {
         if (_selected.Count == 0 && _marquee is null)
             return null;
-        var frames = new List<Rect>();
-        foreach (var group in _selected.GroupBy(i => i.Group ?? (object)i))
+        // Worked out once per selection and mapping: a drag only shifts them.
+        if (_frames is null || _framesStale || _framesFor != _toScreen)
         {
-            var box = Rect.Empty;
-            foreach (var item in group)
-                box.Union(InkHit.Bounds(item, _toScreen, _record.Anchor));
-            if (box.IsEmpty)
-                continue;
-            box.Offset(_selectionDrag);
-            box.Inflate(3, 3);
-            frames.Add(box);
+            _frames = [];
+            foreach (var group in _selected.GroupBy(i => i.Group ?? (object)i))
+            {
+                var box = Rect.Empty;
+                foreach (var item in group)
+                    box.Union(InkHit.Bounds(item, _toScreen, _record.Anchor));
+                if (box.IsEmpty)
+                    continue;
+                box.Inflate(3, 3);
+                _frames.Add(box);
+            }
+            _framesFor = _toScreen;
+            _framesStale = false;
         }
+        var frames = _frames;
+        if (_selectionDrag != default)
+            frames = [.. _frames.Select(f => Rect.Offset(f, _selectionDrag))];
         return new InkAdornments(frames, _marquee, Themes.AccentOf(_theme));
     }
 }

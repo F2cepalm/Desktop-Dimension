@@ -18,13 +18,13 @@ internal static class ToolCatalog
         new(Tool.Cube, "Space cube", "Place a new rectangular space", Key.C, false, ToolIcons.Cube),
         new(Tool.ProjectMeter, "Project meter", "Coming soon", null, true, ToolIcons.Meter),
         new(Tool.TextWrap, "Text wrap", "Coming soon", null, true, ToolIcons.Wrap),
-        new(Tool.Eraser, "Eraser", "Coming soon", null, true, ToolIcons.Eraser),
+        new(Tool.Eraser, "Eraser", "Erase strokes and notes", Key.E, false, ToolIcons.Eraser),
         new(Tool.List, "List", "Coming soon", null, true, ToolIcons.List),
     ];
 
     /// <summary>How menus show a tool.</summary>
     public static ToolInfo Of(Tool tool) => All.First(t => t.Tool == tool);
 
-    /// <summary>The tool a plain key picks (H, P, T, C), if any.</summary>
+    /// <summary>The tool a plain key picks (H, P, T, C, E), if any.</summary>
     public static Tool? ForKey(Key key) => All.FirstOrDefault(t => t.Key == key)?.Tool;
 }

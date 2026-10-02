@@ -28,7 +28,6 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
     private FrameStatsWindow? _frameStats;
     private AppSettings _settings = new();
     private HoverKey[] _undoKeys = [];
-    private HoverKey? _editKey;
 
     public void Start()
     {
@@ -97,7 +96,6 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
             new(ModifierKeys.Control, Key.G, () => spaces.GroupUnderCursor(group: true)),
             new(ModifierKeys.Control | ModifierKeys.Shift, Key.G, () => spaces.GroupUnderCursor(group: false)),
         ];
-        _editKey = new(ModifierKeys.None, Key.E, () => StartTyping(spaces.EditAtCursor));
         _hoverTimer.Tick += (_, _) => UpdateHoverKeys();
         _hoverTimer.Start();
         _windowEvents = new WindowEvents(spaces.OnWindowEvent);
@@ -180,14 +178,14 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
     /// <summary>
     /// Keys that belong to a space while the mouse is on it, and to the focused app the rest of the
     /// time: they are registered as hotkeys only while hovering. Over a space: Ctrl+Z / Ctrl+Y (undo,
-    /// redo), H, P, T, C (pick a tool), and Ctrl+G / Ctrl+Shift+G while it has a selection. Over its
-    /// text with the hand, also E (edit that note). None
-    /// while an overlay or a text box is open, so the keys type as usual there.
+    /// redo), H, P, T, C, E (pick a tool), and Ctrl+G / Ctrl+Shift+G while it has a selection. Over screen
+    /// notes' ink, Ctrl+Z / Ctrl+Y and the group keys. None while an overlay or a text box is open, so the
+    /// keys type as usual there.
     /// </summary>
     /// <remarks>
-    /// H, P, T, C and E are plain letters, so they are only taken while the mouse moved lately (see
-    /// <see cref="LetterKeysAfterMouseMove"/>): pointing at a space and pressing one works, but typing
-    /// into the app underneath with the mouse resting on a space keeps its letters.
+    /// The letters, the group keys, and anything over screen notes are only taken while the mouse moved
+    /// lately (see <see cref="LetterKeysAfterMouseMove"/>): pointing and pressing works, but typing into
+    /// the app underneath with the mouse resting there keeps its keys.
     /// </remarks>
     private void UpdateHoverKeys()
     {
@@ -196,22 +194,15 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         bool moved = Win32.GetCursorPos(out var p) && _cursor.Sample(new Point(p.X, p.Y), _clock.Elapsed);
         var hover = _overlay is null && _wheel is null && !spaces.IsTyping ? spaces.HoverAtCursor() : SpaceManager.Hover.None;
         bool onSpace = hover is SpaceManager.Hover.Space or SpaceManager.Hover.Note;
+        // Over screen notes' ink the mouse may only be resting there: the app keeps its keys then, as for the letters.
+        bool onInk = onSpace || (moved && hover == SpaceManager.Hover.Sheet);
         foreach (var key in _undoKeys)
-            key.Hold(_hotkeys, hover != SpaceManager.Hover.None);
+            key.Hold(_hotkeys, onInk);
         foreach (var key in _toolKeys)
             key.Hold(_hotkeys, moved && onSpace);
-        _editKey?.Hold(_hotkeys, moved && hover == SpaceManager.Hover.Note && spaces.Tool == Tool.Hand);
-        bool selection = hover != SpaceManager.Hover.None && spaces.HasSelectionUnderCursor();
+        bool selection = moved && hover != SpaceManager.Hover.None && spaces.HasSelectionUnderCursor();
         foreach (var key in _groupKeys)
             key.Hold(_hotkeys, selection);
-    }
-
-    /// <summary>T or E: opens a text box, and gives the keys back at once so that the very next one types.</summary>
-    private void StartTyping(Func<bool> open)
-    {
-        _palette?.FadeOut();
-        if (open())
-            UpdateHoverKeys();
     }
 
     /// <summary>

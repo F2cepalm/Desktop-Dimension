@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Input;
 using InfiniteSpace.Native;
 using InfiniteSpace.Rendering;
 using InfiniteSpace.Spaces;
@@ -41,13 +42,13 @@ internal sealed partial class ShellController
                 CloseOverlay(); // a screen-wide tool, if one is open (its closing sets the hand too)
                 spaces.SetTool(Tool.Hand);
                 break;
-            case Tool.Pen or Tool.Text when source == ToolSource.SpaceKey:
+            case Tool.Pen or Tool.Text or Tool.Eraser when source == ToolSource.SpaceKey:
                 spaces.SetTool(tool); // only inside spaces: elsewhere the mouse stays the system's
                 break;
-            case Tool.Pen or Tool.Text:
+            case Tool.Pen or Tool.Text or Tool.Eraser:
                 FadeInkTools();
                 IntPtr focus = Foreground.CaptureHost();
-                var mode = tool == Tool.Pen ? ScreenInkMode.Pen : ScreenInkMode.Text;
+                var mode = tool switch { Tool.Pen => ScreenInkMode.Pen, Tool.Text => ScreenInkMode.Text, _ => ScreenInkMode.Eraser };
                 ShowOverlay(new ScreenInkOverlay(mode, spaces, universe, t => SelectTool(t, ToolSource.OverlayKey)), focus, endsInHand: true);
                 spaces.SetTool(tool); // after ShowOverlay: closing the overlay it replaced set the hand
                 break;
@@ -69,7 +70,7 @@ internal sealed partial class ShellController
                 logger.LogWarning("Can't read the hotkey {Hotkey}", text);
                 continue;
             }
-            if (_hotkeys!.Register(modifiers, key, ToggleWheel) is null)
+            if (_hotkeys!.Register(modifiers, key == Key.Oem3 ? KeyLeftOfOne() : key, ToggleWheel) is null)
                 continue;
             _wheelHotkey = HotkeyText.Format(modifiers, key);
             if (!string.Equals(text, wanted[0], StringComparison.OrdinalIgnoreCase))
@@ -77,6 +78,17 @@ internal sealed partial class ShellController
             return;
         }
         unavailable.Add("the tool wheel's hotkey");
+    }
+
+    /// <summary>
+    /// The key left of 1 on the keyboard in use (` on US keyboards, Ё on Russian ones, ^ on German ones):
+    /// "`" in a hotkey means that key wherever the layout puts it.
+    /// </summary>
+    private static Key KeyLeftOfOne()
+    {
+        const uint LeftOfOne = 0x29, MAPVK_VSC_TO_VK = 1; // its scan code is the same on every layout
+        uint vk = Win32.MapVirtualKey(LeftOfOne, MAPVK_VSC_TO_VK);
+        return vk == 0 ? Key.Oem3 : KeyInterop.KeyFromVirtualKey((int)vk);
     }
 
     /// <summary>The wheel hotkey: opens the wheel at the mouse, or closes it.</summary>

@@ -112,7 +112,28 @@ internal static class Scenarios
         bench.Spaces.Undo(sheetWindow.Handle);
         Check(sheets[0].Strokes.Count == 0, "undo takes it back");
         overlay.Dismiss();
-        return [timer.Finish()];
+
+        var eraser = new Shell.ScreenInkOverlay(Shell.ScreenInkMode.Eraser, bench.Spaces, bench.Universe, _ => { }, OverlayArea);
+        eraser.Show(activate: false);
+        var painted = records.Single(r => r.Kind == SpaceKind.Space);
+        var spaceWindow = bench.Spaces.Windows.ElementAt(records.IndexOf(painted));
+        var sweep = new FrameTimer("screen eraser", theme, bench.Gpu);
+        Ui.Mouse(eraser.Handle, WM_LBUTTONDOWN, On(0));
+        for (int i = 1; i < 60; i++)
+        {
+            var p = On(i);
+            sweep.Frame(() =>
+            {
+                Ui.Mouse(eraser.Handle, WM_MOUSEMOVE, p, leftDown: true);
+                bench.Universe.Tick();
+            });
+        }
+        Ui.Mouse(eraser.Handle, WM_LBUTTONUP, On(59));
+        Check(painted.Strokes.All(s => s.Points.Length == 0), "the eraser takes away the paint it passes over");
+        bench.Spaces.Undo(spaceWindow.Handle);
+        Check(painted.Strokes.Single().Points.Length > 0, "undo brings the erased paint back");
+        eraser.Dismiss();
+        return [timer.Finish(), sweep.Finish()];
     }
 
     /// <summary>The erase brush dragged across two spaces, then released.</summary>

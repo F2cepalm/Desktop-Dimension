@@ -54,6 +54,15 @@ public class SheetsTests
     }
 
     [Fact]
+    public void AStraightStroke_IsAFewLongRectangles()
+    {
+        var line = new InkStroke { Points = [.. Enumerable.Range(0, 200).SelectMany(i => new double[] { 100 + i, 100 })], Thickness = 3 };
+        var record = new SpaceRecord { Kind = SpaceKind.Sheet, Strokes = [line] };
+
+        Assert.InRange(Sheets.HitRects(record, Matrix.Identity).Count(), 2, 4);
+    }
+
+    [Fact]
     public void ADot_GivesOneRectangle()
     {
         var record = new SpaceRecord { Kind = SpaceKind.Sheet, Strokes = [new InkStroke { Points = [5, 5], Thickness = 3 }] };

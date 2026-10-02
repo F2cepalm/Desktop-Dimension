@@ -15,15 +15,15 @@ public class ToolCatalogTests
     }
 
     [Fact]
-    public void TheLastFour_ArePlaceholders()
+    public void ProjectMeterTextWrapAndList_ArePlaceholders()
     {
-        Assert.Equal([false, false, false, false, true, true, true, true], ToolCatalog.All.Select(t => t.IsStub));
+        Assert.Equal([false, false, false, false, true, true, false, true], ToolCatalog.All.Select(t => t.IsStub));
     }
 
     [Fact]
-    public void OnlyTheFirstFour_HaveKeys_HPTC()
+    public void TheRealTools_HaveKeys_HPTCE()
     {
-        Assert.Equal<Key?>([Key.H, Key.P, Key.T, Key.C, null, null, null, null], ToolCatalog.All.Select(t => t.Key));
+        Assert.Equal<Key?>([Key.H, Key.P, Key.T, Key.C, null, null, Key.E, null], ToolCatalog.All.Select(t => t.Key));
     }
 
     [Fact]
@@ -40,6 +40,7 @@ public class ToolCatalogTests
     public void Keys_PickTheirTools()
     {
         Assert.Equal(Tool.Pen, ToolCatalog.ForKey(Key.P));
+        Assert.Equal(Tool.Eraser, ToolCatalog.ForKey(Key.E));
         Assert.Null(ToolCatalog.ForKey(Key.Q));
     }
 }

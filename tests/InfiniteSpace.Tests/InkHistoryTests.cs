@@ -168,6 +168,21 @@ public class InkHistoryTests
     }
 
     [Fact]
+    public void AnErasedSweep_IsOneUndo_AndLeavesNothingToHit()
+    {
+        var stroke = new InkStroke { Points = [0, 0, 10, 0], Thickness = 3, Order = 1 };
+        var note = Note(2);
+        var space = new SpaceRecord { Strokes = [stroke], Notes = [note] };
+        space.Replace(stroke, stroke.Erased(9));
+        space.Replace(note, note.Erased(9));
+
+        Assert.Null(InkHit.At(space, System.Windows.Media.Matrix.Identity, new System.Windows.Point(5, 0)));
+        Assert.Equal(2, space.TakeNewestBatch().Length);
+        Assert.Equal([stroke], space.Strokes);
+        Assert.Equal([note], space.Notes);
+    }
+
+    [Fact]
     public void MovedBy_KeepsThicknessColourAndGroup()
     {
         var stroke = new InkStroke { Points = [1, 2, 3, 4], Thickness = 7, Color = "#FF5A5F", Group = Guid.NewGuid(), Order = 1 };

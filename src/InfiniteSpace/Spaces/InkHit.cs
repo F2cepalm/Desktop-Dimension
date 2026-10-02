@@ -16,13 +16,12 @@ internal static class InkHit
         if (ink is TextNote note)
             return NoteText.Bounds(note, toScreen);
         var stroke = (InkStroke)ink;
+        var box = stroke.Box; // strokes are only ever moved on screen, so their box just moves too
+        if (box.IsEmpty)
+            return box;
         var placed = stroke.Placed(toScreen, anchor);
-        var box = Rect.Empty;
-        var xy = stroke.Points;
-        for (int i = 0; i + 1 < xy.Length; i += 2)
-            box.Union(placed.Transform(new Point(xy[i], xy[i + 1])));
-        if (!box.IsEmpty)
-            box.Inflate(stroke.Thickness / 2, stroke.Thickness / 2);
+        box.Offset(placed.OffsetX, placed.OffsetY);
+        box.Inflate(stroke.Thickness / 2, stroke.Thickness / 2);
         return box;
     }
 
@@ -47,6 +46,12 @@ internal static class InkHit
         {
             if (stroke is not null && candidate.Order < stroke.Order)
                 continue;
+            var box = Bounds(candidate, toScreen, record.Anchor);
+            if (box.IsEmpty)
+                continue; // erased
+            box.Inflate(Reach, Reach);
+            if (!box.Contains(at))
+                continue; // a cheap look at its box first: the mouse is over most strokes' boxes rarely
             if (OnStroke(candidate, candidate.Placed(toScreen, record.Anchor), at, Reach))
                 stroke = candidate;
         }
@@ -60,6 +65,8 @@ internal static class InkHit
         foreach (var stroke in record.Strokes)
         {
             // Points are at most about a DIP apart, so a rectangle across a stroke always holds one.
+            if (!Bounds(stroke, toScreen, record.Anchor).IntersectsWith(area))
+                continue;
             var placed = stroke.Placed(toScreen, record.Anchor);
             var xy = stroke.Points;
             for (int i = 0; i + 1 < xy.Length; i += 2)

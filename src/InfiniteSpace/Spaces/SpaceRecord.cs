@@ -238,6 +238,7 @@ internal sealed class InkStroke : IInk
     public int Revision { get; set; }
 
     private (double[] Points, int Revision, Point Corner)? _corner;
+    private (double[] Points, int Revision, Rect Box)? _box;
 
     /// <summary>The top-left of the box its points cover (DIPs, in the record's coordinates).</summary>
     [JsonIgnore]
@@ -256,6 +257,22 @@ internal sealed class InkStroke : IInk
             var corner = Points.Length < 2 ? new Point() : new Point(x, y);
             _corner = (Points, Revision, corner);
             return corner;
+        }
+    }
+
+    /// <summary>The box its points cover (DIPs, in the record's coordinates, without its thickness); empty with no points.</summary>
+    [JsonIgnore]
+    public Rect Box
+    {
+        get
+        {
+            if (_box is { } b && b.Points == Points && b.Revision == Revision)
+                return b.Box;
+            var box = Rect.Empty;
+            for (int i = 0; i + 1 < Points.Length; i += 2)
+                box.Union(new Point(Points[i], Points[i + 1]));
+            _box = (Points, Revision, box);
+            return box;
         }
     }
 
@@ -304,6 +321,9 @@ internal sealed class InkStroke : IInk
         }
         return new InkStroke { Points = xy, Thickness = Thickness, Color = Color, Group = Group, Order = order };
     }
+
+    /// <summary>A version of the stroke with no points: what the eraser leaves, so that undo brings the stroke back.</summary>
+    public InkStroke Erased(long order) => new() { Thickness = Thickness, Color = Color, Group = Group, Order = order };
 }
 
 internal sealed class TextNote : IInk
@@ -361,6 +381,20 @@ internal sealed class TextNote : IInk
         Bold = Bold,
         Italic = Italic,
         File = File?.Copy(), // the same text: kept where it is
+        Group = Group,
+        Order = order,
+    };
+
+    /// <summary>A version of the note with no text: what the eraser leaves, so that undo brings the note back.</summary>
+    public TextNote Erased(long order) => new()
+    {
+        X = X,
+        Y = Y,
+        FontSize = FontSize,
+        Color = Color,
+        Width = Width,
+        Bold = Bold,
+        Italic = Italic,
         Group = Group,
         Order = order,
     };

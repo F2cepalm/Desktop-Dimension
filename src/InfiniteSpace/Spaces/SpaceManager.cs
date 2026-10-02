@@ -263,7 +263,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         _spaces.Clear();
     }
 
-    /// <summary>Whether a text box is open (the keyboard, T, E, Ctrl+Z and Ctrl+Y then belong to it).</summary>
+    /// <summary>Whether a text box is open (the keyboard, and the keys that belong to spaces, then belong to it).</summary>
     public bool IsTyping => _textEntry is not null;
 
     /// <summary>
@@ -291,16 +291,6 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
 
     /// <summary>The app window the space under the mouse sits on (zero: desktop level), else the app in front: where C draws.</summary>
     public IntPtr HostAtCursor() => HoveredSpace(out _) is { } space ? space.Window.Host : Foreground.CaptureHost();
-
-    /// <summary>E over text on a space: that note in a text box, to edit, move and reshape it.</summary>
-    /// <returns>false when the mouse is not on a note.</returns>
-    public bool EditAtCursor()
-    {
-        if (HoveredSpace(out var at) is not { } space || NoteAt(space, at) is not { } note)
-            return false;
-        BeginText(space, at, note);
-        return true;
-    }
 
     /// <summary>The space the mouse is on (not just near its rim, nor covered by another window), and where.</summary>
     private Space? HoveredSpace(out Point at)
@@ -432,6 +422,60 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         Persist();
     }
 
+    /// <summary>The version a stroke or note replaced (moved, edited or erased), if any.</summary>
+    private static IInk? PreviousOf(IInk ink) => ink switch
+    {
+        InkStroke stroke => stroke.Previous,
+        TextNote note => note.Previous,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Strokes and notes the eraser passed over: each is replaced by an empty version of itself, all of a
+    /// sweep with one order, so one undo brings the whole sweep back.
+    /// </summary>
+    private void EraseInk(Space space, IReadOnlyList<IInk> items, long order)
+    {
+        if (!_spaces.Contains(space))
+            return;
+        bool erased = false;
+        foreach (var item in items)
+        {
+            if (item is InkStroke stroke && space.Record.Strokes.Contains(stroke))
+                space.Record.Replace(stroke, stroke.Erased(order));
+            else if (item is TextNote note && space.Record.Notes.Contains(note))
+                space.Record.Replace(note, note.Erased(order));
+            else
+                continue;
+            erased = true;
+        }
+        if (!erased)
+            return;
+        space.Redo.Clear();
+        ShowInk(space);
+        Persist();
+    }
+
+    /// <summary>
+    /// The eraser on the screen at a point (screen DIPs): the topmost ink there, on a space or on screen
+    /// notes, is erased with <paramref name="order"/> (one per sweep).
+    /// </summary>
+    /// <returns>The window it was erased from (for undo), or zero when there was no ink there.</returns>
+    public IntPtr EraseAt(Point at, long order)
+    {
+        for (int i = _spaces.Count - 1; i >= 0; i--)
+        {
+            var space = _spaces[i];
+            if (!space.Window.IsShowing || (!space.IsSheet && !space.Window.Contains(at)))
+                continue;
+            if (InkHit.At(space.Record, space.ToScreen, at, space.Window.Editing) is not { } ink)
+                continue;
+            EraseInk(space, [ink], order);
+            return space.Window.Handle;
+        }
+        return IntPtr.Zero;
+    }
+
     /// <summary>Whether the space under the mouse has a selection (Ctrl+G and Ctrl+Shift+G belong to it then).</summary>
     public bool HasSelectionUnderCursor() => HoveredSpace(out _)?.Window.HasSelection == true;
 
@@ -441,9 +485,28 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         if (HoveredSpace(out _) is not { } space || space.Window.Selected.Count < (group ? 2 : 1))
             return false;
         Guid? id = group ? Guid.NewGuid() : null;
-        foreach (var item in space.Window.Selected)
-            item.Group = id;
-        space.Window.RedrawInk(); // one frame round the group now
+        var chosen = space.Window.Selected.ToList();
+        // Their earlier versions too, and newer ones waiting for redo: undoing or redoing a move keeps the group.
+        foreach (var item in chosen)
+        {
+            for (var version = item; version is not null; version = PreviousOf(version))
+                version.Group = id;
+        }
+        foreach (var batch in space.Redo)
+        {
+            foreach (var ink in batch)
+            {
+                for (var version = PreviousOf(ink); version is not null; version = PreviousOf(version))
+                {
+                    if (chosen.Contains(version))
+                    {
+                        ink.Group = id;
+                        break;
+                    }
+                }
+            }
+        }
+        space.Window.Select(chosen); // one frame round the group now
         Persist();
         return true;
     }
@@ -647,6 +710,15 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         window.NoteClicked = (_, at, click) => OnNoteClicked(space, at, click);
         window.EditRequested += (_, note, at) => BeginText(space, at, note);
         window.SelectionMoved += (_, items, by) => MoveInk(space, items, by);
+        window.InkErased += (_, items, order) => EraseInk(space, items, order);
+        window.HandPressed += pressed =>
+        {
+            foreach (var other in _spaces)
+            {
+                if (other.Window != pressed)
+                    other.Window.ClearSelection(); // one selection at a time, on the space in hand
+            }
+        };
         window.TextDropped += (_, text, at) => DropText(space, text, at);
         window.HostClosed += _ => _dispatcher.BeginInvoke(DispatcherPriority.Normal, () => OnHostClosed(space)); // not mid-frame
         _spaces.Add(space);
@@ -836,7 +908,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
             .Select(h => new HostMatcher.Waiting(h.Window, h.App, h.WindowClass, h.Title))
             .ToList();
         var classes = waiting.Select(w => w.WindowClass).ToHashSet(StringComparer.Ordinal);
-        var busy = _spaces.Select(s => s.Window.Host).Where(h => h != IntPtr.Zero).ToHashSet();
+        // Screen notes on a window don't keep its spaces away (a second sheet on it is harmless).
+        var busy = _spaces.Where(s => !s.IsSheet).Select(s => s.Window.Host).Where(h => h != IntPtr.Zero).ToHashSet();
 
         var open = new List<HostMatcher.Open>();
         foreach (var hwnd in AppWindows.OpenWindows())

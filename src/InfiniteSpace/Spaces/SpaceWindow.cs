@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -142,6 +143,7 @@ internal sealed partial class SpaceWindow : IDisposable
         Pressed,
         Painting,
         TextPressed,
+        Erasing,
         HandOnInk,
         HandOnEmpty,
         MovingSelection,
@@ -178,11 +180,12 @@ internal sealed partial class SpaceWindow : IDisposable
             _tool = value;
             if (EffectiveTool != Tool.Hand)
                 ClearSelection();
+            RefreshCursor(); // Windows asks for the cursor only on mouse input: a key alone would leave the old one
         }
     }
 
-    /// <summary>The tool as it acts here: the pen and text as picked, everything else as the hand.</summary>
-    private Tool EffectiveTool => IsSheet ? Tool.Hand : _tool is Tool.Pen or Tool.Text ? _tool : Tool.Hand;
+    /// <summary>The tool as it acts here: the pen, text and eraser as picked, everything else as the hand (screen notes: always the hand).</summary>
+    private Tool EffectiveTool => IsSheet ? Tool.Hand : _tool is Tool.Pen or Tool.Text or Tool.Eraser ? _tool : Tool.Hand;
 
     /// <summary>Whether this shows screen notes rather than a space (see <see cref="SpaceKind.Sheet"/>).</summary>
     private bool IsSheet => _record.Kind == SpaceKind.Sheet;
@@ -479,8 +482,14 @@ internal sealed partial class SpaceWindow : IDisposable
     /// <summary>All the ink afresh: the note being edited left out, notes and strokes where they are shown, new files fading in.</summary>
     private void DrawInk()
     {
-        // Ink that is gone (undone, replaced by a move) can't stay selected.
-        _selected.RemoveWhere(i => i is InkStroke s ? !_record.Strokes.Contains(s) : !_record.Notes.Contains((TextNote)i));
+        // Ink that is gone (undone, replaced by a move or erased) can't stay selected. Mid-drag the record doesn't change.
+        if (_selected.Count > 0 && _gesture != Gesture.MovingSelection)
+        {
+            var live = new HashSet<IInk>(_record.Strokes);
+            live.UnionWith(_record.Notes);
+            if (_selected.RemoveWhere(i => !live.Contains(i)) > 0)
+                _framesStale = true;
+        }
         _inkDirty = _ink!.Redraw(_record, _toScreen, _editing, PlaceNotes, _arrivals.Count > 0 ? NoteOpacity : null, PlaceStrokes, Adornments());
     }
 
@@ -896,6 +905,14 @@ internal sealed partial class SpaceWindow : IDisposable
     /// <summary>A sheet takes the mouse only on its ink (see <see cref="Sheets.HitRects"/>); everywhere else clicks reach the app.</summary>
     private void ApplySheetRegion()
     {
+        // Remade only when the ink or where it is shown changed (a click that only selects changes neither).
+        var key = (SheetInkKey(), _toScreen, _world);
+        if (_region != IntPtr.Zero && _sheetRegionFor == key)
+        {
+            SetRegion(Copy(_region)); // floating may have taken it off the window
+            return;
+        }
+        _sheetRegionFor = key;
         double scale = Dpi.Scale;
         IntPtr region = Win32.CreateRectRgn(0, 0, 0, 0);
         foreach (var r in Sheets.HitRects(_record, _toScreen))
@@ -910,6 +927,22 @@ internal sealed partial class SpaceWindow : IDisposable
             Win32.DeleteObject(_region);
         _region = Copy(region); // put back after floating (see RestoreRegion)
         SetRegion(region);
+    }
+
+    private (int Ink, Matrix ToScreen, Rect World)? _sheetRegionFor;
+
+    /// <summary>Changes whenever a stroke or note is added, removed, replaced or moved in place.</summary>
+    private int SheetInkKey()
+    {
+        var hash = new HashCode();
+        foreach (var stroke in _record.Strokes)
+        {
+            hash.Add(RuntimeHelpers.GetHashCode(stroke));
+            hash.Add(stroke.Revision);
+        }
+        foreach (var note in _record.Notes)
+            hash.Add(RuntimeHelpers.GetHashCode(note));
+        return hash.ToHashCode();
     }
 
     /// <summary>The click-through shape back on the window after floating: made afresh if the shape changed meanwhile.</summary>
@@ -963,12 +996,7 @@ internal sealed partial class SpaceWindow : IDisposable
                 return new IntPtr(Win32.MA_NOACTIVATE);
 
             case Win32.WM_SETCURSOR:
-                Win32.SetCursor(EffectiveTool switch
-                {
-                    Tool.Pen => CrossCursor,
-                    Tool.Text => IBeamCursor,
-                    _ => InkUnderCursor() is null ? ArrowCursor : MoveCursor,
-                });
+                Win32.SetCursor(CursorNow());
                 handled = true;
                 return new IntPtr(1);
 
@@ -990,6 +1018,9 @@ internal sealed partial class SpaceWindow : IDisposable
                     case Tool.Text:
                         _gesture = Gesture.TextPressed;
                         break;
+                    case Tool.Eraser:
+                        EraseDown(at);
+                        break;
                     default:
                         HandDown(at);
                         break;
@@ -1003,6 +1034,8 @@ internal sealed partial class SpaceWindow : IDisposable
                 var at = ToScreen(lParam);
                 if (_gesture is Gesture.Pressed or Gesture.Painting)
                     Drag(at);
+                else if (_gesture == Gesture.Erasing)
+                    EraseAlong(at);
                 else if (_gesture != Gesture.TextPressed)
                     HandDrag(at);
                 handled = true;
@@ -1025,7 +1058,7 @@ internal sealed partial class SpaceWindow : IDisposable
                     case Gesture.TextPressed:
                         TypeRequested?.Invoke(this, _pressedAt);
                         break;
-                    case Gesture.None:
+                    case Gesture.None or Gesture.Erasing:
                         break;
                     default:
                         HandUp(gesture);

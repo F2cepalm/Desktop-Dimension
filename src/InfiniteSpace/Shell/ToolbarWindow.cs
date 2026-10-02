@@ -14,9 +14,9 @@ using InfiniteSpace.Spaces;
 namespace InfiniteSpace.Shell;
 
 /// <summary>
-/// The toolbar: a small square in the theme's chrome with three dots, always on top. A click unfolds the
-/// tools, named, with their keys; a drag moves it. It never takes the keyboard from the app (or from a
-/// screen-wide tool), and it hides while a full-screen app is in front.
+/// The toolbar: a small square in the theme's chrome showing the current tool over three dots, always
+/// on top. A click unfolds the tools, named, with their keys; a drag moves it. It never takes the
+/// keyboard from the app (or from a screen-wide tool), and it hides while a full-screen app is in front.
 /// </summary>
 internal sealed class ToolbarWindow : Window
 {
@@ -157,10 +157,11 @@ internal sealed class ToolbarWindow : Window
     /// <summary>The square was dragged here (screen DIPs of its top-left).</summary>
     public event Action<Point>? Moved;
 
-    /// <summary>Marks the current tool's row.</summary>
+    /// <summary>Shows the current tool on the square and marks its row.</summary>
     public void ShowTool(Tool tool)
     {
         _current = tool;
+        _squareView.Child = Face(Frozen(_chrome.Fore), pixel: _chrome.Corner == 0);
         RestyleRows();
     }
 
@@ -178,7 +179,7 @@ internal sealed class ToolbarWindow : Window
             frame.BorderThickness = new Thickness(chrome.EdgeWidth);
             frame.CornerRadius = new CornerRadius(chrome.Corner);
         }
-        _squareView.Child = Dots(fore, pixel: chrome.Corner == 0);
+        _squareView.Child = Face(fore, pixel: chrome.Corner == 0);
         _header.Foreground = fore;
         foreach (var info in ToolCatalog.All)
         {
@@ -329,19 +330,28 @@ internal sealed class ToolbarWindow : Window
             Visibility = wanted;
     }
 
-    /// <summary>Three 4×4 dots, 3 DIPs apart: square ones in the pixel themes, round ones elsewhere.</summary>
-    private static UIElement Dots(Brush fore, bool pixel)
+    /// <summary>
+    /// The square's face: the current tool's icon over three 3×3 dots, 2 DIPs apart (square ones in the
+    /// pixel themes, round ones elsewhere), so a key that picks a tool shows on screen at once.
+    /// </summary>
+    private UIElement Face(Brush fore, bool pixel)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+        var face = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+        var icon = ToolIcons.Shape(ToolCatalog.Of(_current).Icon, fore);
+        icon.Width = icon.Height = 16;
+        face.Children.Add(icon);
+        var dots = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 1, 0, 0) };
         for (int i = 0; i < 3; i++)
         {
             Shape dot = pixel ? new Rectangle() : new Ellipse();
-            dot.Width = dot.Height = 4;
+            dot.Width = dot.Height = 3;
             dot.Fill = fore;
-            dot.Margin = new Thickness(i == 0 ? 0 : 3, 0, 0, 0);
-            row.Children.Add(dot);
+            dot.Margin = new Thickness(i == 0 ? 0 : 2, 0, 0, 0);
+            dots.Children.Add(dot);
         }
-        return row;
+        face.Children.Add(dots);
+        AutomationProperties.SetName(_squareView, $"Tools: {ToolCatalog.Of(_current).Name}");
+        return face;
     }
 
     private static Point DefaultPlace() =>

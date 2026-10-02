@@ -244,6 +244,10 @@ internal static class Win32
     public static extern IntPtr MonitorFromPoint(POINT point, uint flags);
 
     /// <summary>The window under a screen point; transparent pixels of layered windows don't count.</summary>
+    /// <summary>Translates a scan code to a virtual key on the current keyboard layout (and back).</summary>
+    [DllImport("user32.dll")]
+    public static extern uint MapVirtualKey(uint code, uint mapType);
+
     [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 
