@@ -259,8 +259,8 @@ internal sealed class MoveOverlay : GpuOverlay
     {
         if (_moving is null)
             return;
-        _rect = rect;
         _spaces.Fit(_moving, rect, _carried);
+        _rect = _moving.Now; // what the space took: a text card keeps its height to its text, so the frame follows it, not the ask
         Layout();
     }
 
