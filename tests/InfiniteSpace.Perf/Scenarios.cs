@@ -139,8 +139,10 @@ internal static class Scenarios
         Check(bench.Spaces.WrapText("Wrapped words", selection, IntPtr.Zero, 18, bold: true, italic: false, System.Windows.Media.Colors.White), "selected text wraps into a space");
         var wrapped = bench.Spaces.Records.Last();
         var bounds = SpaceGeometry.Decode(wrapped).Bounds;
-        Check(bench.Spaces.Count == before + 1 && bounds.Contains(selection) && bounds.Width - selection.Width <= 2 * DreamStyle.ArtPixel, $"the space is the selection's size ({bounds.Width:0} × {bounds.Height:0})");
-        Check(wrapped.Notes.Single() is { Text: "Wrapped words", Bold: true } note && note.Width == bounds.Width, "it holds the text, styled, wrapped at its width");
+        Check(bench.Spaces.Count == before + 1 && wrapped.Card && bounds.Contains(selection) && bounds.Width - selection.Width <= 2 * DreamStyle.ArtPixel, $"a card as wide as the selection, from its top-left ({bounds.Width:0} × {bounds.Height:0})");
+        double pad = SpaceManager.CardPadding(18);
+        Check(wrapped.Notes.Single() is { Text: "Wrapped words", Bold: true } note && Math.Abs(note.Width!.Value - (bounds.Width - 2 * pad)) < 0.01 && note.X - bounds.Left == pad,
+            "it holds the text, styled, wrapped inside even margins");
         return [timer.Finish(), sweep.Finish()];
     }
 

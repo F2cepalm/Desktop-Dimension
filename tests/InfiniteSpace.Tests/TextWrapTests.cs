@@ -7,30 +7,76 @@ namespace InfiniteSpace.Tests;
 
 public class TextWrapTests
 {
+    private const string Paragraph = "A paragraph a little too long for the area it came from, once laid out in our font.";
+
     [Fact]
-    public void TextThatFits_KeepsItsSize_AndWrapsAtTheSelectionsWidth()
+    public void Padding_ClearsTheRim_AtEverySize()
+    {
+        for (double size = 6; size <= 72; size += 0.5)
+        {
+            double pad = SpaceManager.CardPadding(size);
+            Assert.True(pad >= 10 && pad >= size * 0.75, $"{size}: {pad}");
+            Assert.Equal(0, pad % DreamStyle.ArtPixel);
+        }
+    }
+
+    [Fact]
+    public void ACard_HoldsItsTextInsideTheMargins()
     {
         Gpu.RunOnSta(() =>
         {
-            var (size, width) = SpaceManager.FitWrappedText("Hello", new Size(200, 40), 16, bold: false, italic: false);
+            var note = new TextNote { Text = Paragraph, FontSize = 16 };
+            var size = SpaceManager.CardSize(note, 240);
+            double pad = SpaceManager.CardPadding(16);
 
-            Assert.Equal((16.0, 200.0), (size, width));
+            using var layout = NoteText.Layout(Paragraph, 16, 240 - 2 * pad);
+            Assert.Equal(240, size.Width);
+            Assert.True(size.Height >= layout.Metrics.Height + 2 * pad);
+            Assert.True(layout.Metrics.Width <= 240 - 2 * pad + 0.5);
         });
     }
 
     [Fact]
-    public void TextTooBigForTheSelection_IsMadeSmallerUntilItFits()
+    public void ANarrowerCard_IsNeverShorter()
     {
         Gpu.RunOnSta(() =>
         {
-            const string text = "A paragraph a little too long for the area it came from, once laid out in our font.";
-            var box = new Size(180, 60);
+            var note = new TextNote { Text = Paragraph, FontSize = 18 };
+            double last = 0;
+            for (double width = 600; width >= 100; width -= 20)
+            {
+                double height = SpaceManager.CardSize(note, width).Height;
+                Assert.True(height >= last, $"{width}: {height} < {last}");
+                last = height;
+            }
+        });
+    }
 
-            var (size, width) = SpaceManager.FitWrappedText(text, box, 24, bold: true, italic: false);
+    [Fact]
+    public void ACard_IsNeverNarrowerThanAFewLetters()
+    {
+        Gpu.RunOnSta(() =>
+        {
+            var size = SpaceManager.CardSize(new TextNote { Text = "Hi", FontSize = 20 }, 5);
 
-            Assert.InRange(size, SpaceManager.SmallestWrappedType, 23.5);
-            using var layout = NoteText.Layout(text, size, width, bold: true);
-            Assert.True(layout.Metrics.Height <= box.Height + 0.5);
+            Assert.True(size.Width >= SpaceManager.MinCardWidth(20));
+        });
+    }
+
+    [Fact]
+    public void ShapeCard_PutsTheNoteInsideTheMargins_AndTheOutlineRoundIt()
+    {
+        Gpu.RunOnSta(() =>
+        {
+            var record = new SpaceRecord { Card = true, Notes = [new TextNote { Text = Paragraph, FontSize = 16 }] };
+
+            var box = SpaceManager.ShapeCard(record, new Point(100, 50), 300);
+
+            double pad = SpaceManager.CardPadding(16);
+            var note = record.Notes[0];
+            Assert.Equal((100 + pad, 50 + pad, 300 - 2 * pad), (note.X, note.Y, note.Width!.Value));
+            Assert.Equal(box, SpaceGeometry.Decode(record).Bounds);
+            Assert.Equal(SpaceManager.CardSize(note, 300), box.Size);
         });
     }
 

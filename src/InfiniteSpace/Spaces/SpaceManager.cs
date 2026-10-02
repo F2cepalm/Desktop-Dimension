@@ -621,7 +621,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         IntPtr host = AppWindows.WindowAt(at);
         Bake(space); // text goes where it is shown
         space.Record.Host = Describe(host);
-        var crossed = _spaces.Where(s => s != space && !s.IsSheet && SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, space.Outline)).ToList();
+        List<Space> crossed = space.Record.Card ? [] : _spaces.Where(s => s != space && !s.IsSheet && !s.Record.Card && SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, space.Outline)).ToList();
         if (crossed.Count == 0)
         {
             Rest(space);
@@ -666,7 +666,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     {
         var outline = SpaceGeometry.Decode(drawn);
         var crossed = crossing
-            ?? _spaces.Where(s => !s.IsSheet && SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, outline)).ToList();
+            ?? _spaces.Where(s => !s.IsSheet && !s.Record.Card && SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, outline)).ToList(); // cards never merge
         foreach (var space in crossed)
             Bake(space);
 
