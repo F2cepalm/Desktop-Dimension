@@ -1,6 +1,6 @@
 # Plan: tools everywhere (tool wheel, toolbar, hand tool, screen notes)
 
-Written 1 October 2026, for another model to implement. The user approved the decisions on 2 October 2026, changing D2 (the Space cube places a block). Status: **not started**.
+Written 1 October 2026, for another model to implement. The user approved the decisions on 2 October 2026, changing D2 (the Space cube places a block). Status: **implemented** (phases 1–7 committed 2 October 2026; manual checks pending).
 
 Today the app does everything through spaces. You paint by dragging inside a space, and **T** opens a text box. Controls are hidden in hotkeys and right-clicks.
 
