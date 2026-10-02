@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/InfiniteSpace/InfiniteSpace.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/InfiniteSpace.Perf/InfiniteSpace.Perf.csproj" />
+    <Project Path="tests/InfiniteSpace.Tests/InfiniteSpace.Tests.csproj" />
+  </Folder>
+</Solution>
