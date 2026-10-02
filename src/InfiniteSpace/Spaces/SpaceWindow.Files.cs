@@ -148,7 +148,7 @@ internal sealed partial class SpaceWindow
     /// <summary>A little wobble, as if the space took the file in: Dreamy only, and not while Windows' animations are off.</summary>
     private void Wobble()
     {
-        if (_theme != Themes.Dreamy || !SystemParameters.ClientAreaAnimation || _gpu.IsSoftware || !_shown || _hidden || _floating || _live is not null || _liftedUnder != IntPtr.Zero)
+        if (IsSheet || _theme != Themes.Dreamy || !SystemParameters.ClientAreaAnimation || _gpu.IsSoftware || !_shown || _hidden || _floating || _live is not null || _liftedUnder != IntPtr.Zero)
             return;
         _live = (_outline, _toScreen);
         _restWhenStill = true;

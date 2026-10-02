@@ -145,6 +145,30 @@ public sealed class SpaceStoreTests : IDisposable
     }
 
     [Fact]
+    public void ScreenNotes_AreSavedAsSheets_AndSpacesDontSayWhatTheyAre()
+    {
+        var store = CreateStore();
+        store.Save([new SpaceRecord { Kind = SpaceKind.Sheet, Figures = [[0, 0, 10, 0, 10, 10]] }, new SpaceRecord { Figures = [[0, 0, 10, 0, 10, 10]] }]);
+
+        var restored = store.Load();
+
+        Assert.Equal([SpaceKind.Sheet, SpaceKind.Space], restored.Select(r => r.Kind));
+        Assert.Contains("\"Sheet\"", File.ReadAllText(store.FilePath));
+        store.Save([new SpaceRecord { Figures = [[0, 0, 10, 0, 10, 10]] }]);
+        Assert.DoesNotContain("\"Kind\"", File.ReadAllText(store.FilePath));
+    }
+
+    [Fact]
+    public void SpacesSavedBeforeScreenNotes_AreSpaces()
+    {
+        var store = CreateStore();
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(store.FilePath, """{"Version":1,"Spaces":[{"Figures":[[0,0,10,0,10,10]]}]}""");
+
+        Assert.Equal(SpaceKind.Space, Assert.Single(store.Load()).Kind);
+    }
+
+    [Fact]
     public void CorruptFile_StartsEmptyAndKeepsACopy()
     {
         var store = CreateStore();

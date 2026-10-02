@@ -14,6 +14,8 @@ internal sealed record TrayActions(
     Action Ink,
     Action EraseWithBrush,
     Action EraseAll,
+    Action DrawOnScreen,
+    Action ClearScreenNotes,
     IReadOnlyList<string> Themes,
     Func<string> CurrentTheme,
     Action<string> SetTheme,
@@ -45,6 +47,7 @@ internal sealed class TrayIcon : IDisposable
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add(Item("Draw a space", "Ctrl+Alt+S", actions.Draw));
         menu.Items.Add(Item("Spawn a block", "Ctrl+Alt+B", actions.Block));
+        menu.Items.Add(Item("Draw on the screen", null, actions.DrawOnScreen));
         menu.Items.Add(Item("Move a space", "Ctrl+Alt+M", actions.Move));
         // From the menu the cursor is on the tray, so this removes the newest space.
         menu.Items.Add(Item("Remove newest space", "Ctrl+Alt+E", actions.Remove));
@@ -52,6 +55,7 @@ internal sealed class TrayIcon : IDisposable
         menu.Items.Add(Item("Ink colour and size…", "Right-click a space", actions.Ink));
         menu.Items.Add(Item("Erase with brush…", null, actions.EraseWithBrush));
         menu.Items.Add(Item("Erase all spaces…", null, actions.EraseAll));
+        menu.Items.Add(Item("Clear screen notes…", null, actions.ClearScreenNotes));
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add(theme);
         menu.Items.Add(autostart);

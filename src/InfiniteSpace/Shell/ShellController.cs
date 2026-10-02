@@ -54,6 +54,8 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
             Ink: () => ShowPalette(CursorOnScreen()),
             EraseWithBrush: () => ShowOverlay(new CanvasOverlay(OverlayMode.Erase, spaces, universe, IntPtr.Zero), IntPtr.Zero),
             EraseAll: ConfirmEraseAll,
+            DrawOnScreen: () => SelectTool(Tool.Pen, ToolSource.Toolbar),
+            ClearScreenNotes: ConfirmClearScreenNotes,
             Themes: Themes.All,
             CurrentTheme: () => Themes.Resolve(_settings.Theme),
             SetTheme: SetTheme,
@@ -325,13 +327,29 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
 
         FadeInkTools();
         var answer = MessageBox.Show(
-            $"Erase all {spaces.Count} space(s)? This cannot be undone.",
+            $"Erase all {spaces.Count} spaces and screen notes? This cannot be undone.",
             "Infinite Space",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);
         if (answer == MessageBoxResult.Yes)
             spaces.EraseAll();
+    }
+
+    private void ConfirmClearScreenNotes()
+    {
+        if (spaces.SheetCount == 0)
+            return;
+
+        FadeInkTools();
+        var answer = MessageBox.Show(
+            "Clear all screen notes? This cannot be undone.",
+            "Infinite Space",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (answer == MessageBoxResult.Yes)
+            spaces.ClearSheets();
     }
 
     private void OpenDataFolder()

@@ -369,6 +369,7 @@ internal static class Win32
     // Other apps' windows: where they are, what they are, and finding them again.
 
     public const uint EVENT_OBJECT_SHOW = 0x8002;
+    public const int RGN_OR = 2;
     public const int RGN_COPY = 5;
 
     [DllImport("gdi32.dll")]

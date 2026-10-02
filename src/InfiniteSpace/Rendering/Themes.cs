@@ -47,6 +47,9 @@ internal static class Themes
         _ => Colors.White,
     };
 
+    /// <summary>Colour of screen notes painted or typed in the theme's ink: the palette's red, which reads on light and dark apps alike.</summary>
+    public static readonly Color SheetInk = Color.FromRgb(0xFF, 0x5A, 0x5F);
+
     /// <summary>
     /// The theme's accent, for what stands out in opened files (headings, links, quote bars): picked
     /// from the theme's own colours so it reads on its background.

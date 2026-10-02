@@ -28,7 +28,7 @@ internal sealed partial class SpaceManager
     public int OpenFiles(IReadOnlyList<string> paths, Point at) =>
         SpaceAt(at) is { } space ? OpenFiles(space, paths, at) : 0;
 
-    private Space? SpaceAt(Point at) => _spaces.LastOrDefault(s => s.Window.IsShowing && s.Window.Contains(at));
+    private Space? SpaceAt(Point at) => _spaces.LastOrDefault(s => !s.IsSheet && s.Window.IsShowing && s.Window.Contains(at));
 
     private int OpenFiles(Space space, IReadOnlyList<string> paths, Point at)
     {

@@ -34,6 +34,7 @@ internal static class Scenarios
         new("stats", [Themes.Dreamy], Stats),
         new("keys", [Themes.Dreamy], Keys),
         new("clickthrough", [Themes.Dreamy], ClickThrough),
+        new("screenink", [Themes.Dreamy, Themes.Glory], ScreenInk),
     ];
 
     /// <summary>Where the overlays go in the tests: off every screen, over the spaces made there.</summary>
@@ -70,6 +71,48 @@ internal static class Scenarios
         });
         Check(bench.Spaces.Count == 1, "the loop became a space");
         return [timer.Finish(), done.Finish()];
+    }
+
+    /// <summary>The screen pen: a stroke beside a space becomes screen notes, one starting on the space paints it, and undo takes the notes back.</summary>
+    private static IEnumerable<Result> ScreenInk(string theme, Options options)
+    {
+        var space = new Rect(Bench.X, Bench.Y, 300, 200);
+        using var bench = new Bench(theme, [Bench.Record(space, ink: false)]);
+        var overlay = new Shell.ScreenInkOverlay(Shell.ScreenInkMode.Pen, bench.Spaces, bench.Universe, _ => { }, OverlayArea);
+        overlay.Show(activate: false);
+
+        var timer = new FrameTimer("screen pen", theme, bench.Gpu);
+        Point Beside(int i) => new(Bench.X + 400 + i * 2, Bench.Y + 250 + 60 * Math.Sin(i / 15.0));
+        Ui.Mouse(overlay.Handle, WM_LBUTTONDOWN, Beside(0));
+        for (int i = 1; i < 200; i++)
+        {
+            var p = Beside(i);
+            timer.Frame(() =>
+            {
+                Ui.Mouse(overlay.Handle, WM_MOUSEMOVE, p, leftDown: true);
+                bench.Universe.Tick();
+            });
+        }
+        Ui.Mouse(overlay.Handle, WM_LBUTTONUP, Beside(199));
+        bench.Universe.Tick();
+
+        Point On(int i) => new(Bench.X + 40 + i * 2, Bench.Y + 100 + 30 * Math.Sin(i / 10.0));
+        Ui.Mouse(overlay.Handle, WM_LBUTTONDOWN, On(0));
+        for (int i = 1; i < 60; i++)
+            Ui.Mouse(overlay.Handle, WM_MOUSEMOVE, On(i), leftDown: true);
+        Ui.Mouse(overlay.Handle, WM_LBUTTONUP, On(59));
+        bench.Universe.Tick();
+        options.Picture(overlay.Handle, $"screenink-{theme}");
+
+        var records = bench.Spaces.Records.ToList();
+        var sheets = records.Where(r => r.Kind == SpaceKind.Sheet).ToList();
+        Check(sheets.Count == 1 && sheets[0].Strokes.Count == 1, "a stroke beside a space became screen notes");
+        Check(records.Single(r => r.Kind == SpaceKind.Space).Strokes.Count == 1, "a stroke that starts on a space paints it");
+        var sheetWindow = bench.Spaces.Windows.ElementAt(records.IndexOf(sheets[0]));
+        bench.Spaces.Undo(sheetWindow.Handle);
+        Check(sheets[0].Strokes.Count == 0, "undo takes it back");
+        overlay.Dismiss();
+        return [timer.Finish()];
     }
 
     /// <summary>The erase brush dragged across two spaces, then released.</summary>

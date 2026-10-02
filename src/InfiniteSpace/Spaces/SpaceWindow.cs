@@ -114,7 +114,7 @@ internal sealed partial class SpaceWindow : IDisposable
         _previewUnder = previewUnder;
         _theme = theme;
         _toScreen = toScreen;
-        _look = Themes.CreateLook(theme);
+        _look = CreateLook();
 
         // No redirection bitmap: the window shows only what DirectComposition puts in it.
         _source = new HwndSource(new HwndSourceParameters("Infinite Space")
@@ -126,7 +126,7 @@ internal sealed partial class SpaceWindow : IDisposable
             Height = 1,
         });
         _source.AddHook(WndProc);
-        if (previewUnder == IntPtr.Zero)
+        if (previewUnder == IntPtr.Zero && record.Kind == SpaceKind.Space)
             AcceptFiles();
         int noRounding = Win32.DWMWCP_DONOTROUND;
         Win32.DwmSetWindowAttribute(_source.Handle, Win32.DWMWA_WINDOW_CORNER_PREFERENCE, ref noRounding, sizeof(int));
@@ -182,7 +182,16 @@ internal sealed partial class SpaceWindow : IDisposable
     }
 
     /// <summary>The tool as it acts here: the pen and text as picked, everything else as the hand.</summary>
-    private Tool EffectiveTool => _tool is Tool.Pen or Tool.Text ? _tool : Tool.Hand;
+    private Tool EffectiveTool => IsSheet ? Tool.Hand : _tool is Tool.Pen or Tool.Text ? _tool : Tool.Hand;
+
+    /// <summary>Whether this shows screen notes rather than a space (see <see cref="SpaceKind.Sheet"/>).</summary>
+    private bool IsSheet => _record.Kind == SpaceKind.Sheet;
+
+    /// <summary>Colour of ink with none of its own: the theme's, or screen notes' red.</summary>
+    private Color ThemeInk => IsSheet ? Themes.SheetInk : Themes.InkOf(_theme);
+
+    /// <summary>A look for this window: the theme's, or none at all for screen notes.</summary>
+    private ISpaceLook CreateLook() => IsSheet ? new BareLook() : Themes.CreateLook(_theme);
 
     /// <summary>The text tool clicked here (screen DIPs): a text box should open there.</summary>
     public event Action<SpaceWindow, Point>? TypeRequested;
@@ -288,7 +297,7 @@ internal sealed partial class SpaceWindow : IDisposable
         _live = (outline, toScreen);
         _liveChanged = true;
         // Only Dreamy wobbles; and none while Windows' "Show animations" is off, nor in software drawing.
-        _jelly.Retarget(outline.Bounds, wobble: _theme == Themes.Dreamy && SystemParameters.ClientAreaAnimation && !_gpu.IsSoftware);
+        _jelly.Retarget(outline.Bounds, wobble: !IsSheet && _theme == Themes.Dreamy && SystemParameters.ClientAreaAnimation && !_gpu.IsSoftware);
         _needsPresent = true; // wanted on the very next frame
     }
 
@@ -405,10 +414,10 @@ internal sealed partial class SpaceWindow : IDisposable
             return;
         _theme = theme;
         _look.Dispose();
-        _look = Themes.CreateLook(theme);
+        _look = CreateLook();
         if (_ink is not null)
         {
-            _ink.ThemeInk = Themes.InkOf(theme);
+            _ink.ThemeInk = ThemeInk;
             _ink.ThemeAccent = Themes.AccentOf(theme);
         }
         _surface.HideStills(); // the new look draws its own, if it has any
@@ -429,7 +438,7 @@ internal sealed partial class SpaceWindow : IDisposable
         _surface.Dispose();
         _surface = new SpaceSurface(_gpu, _source.Handle);
         _look.Dispose();
-        _look = Themes.CreateLook(_theme);
+        _look = CreateLook();
         EndLive();
         _restWhenStill = false;
         if (_floating)
@@ -446,6 +455,13 @@ internal sealed partial class SpaceWindow : IDisposable
     {
         if (_disposed)
             return;
+        if (IsSheet && _gesture == Gesture.None) // mid-drag the window has the mouse anyway; it is made once the drag ends
+        {
+            if (_floating)
+                _regionStale = true;
+            else
+                ApplyRegion();
+        }
         if (_record.Strokes.Count == 0 && _record.Notes.Count == 0)
         {
             _selected.Clear(); // nothing left to select
@@ -827,6 +843,11 @@ internal sealed partial class SpaceWindow : IDisposable
         _regionStale = false;
         if (_previewUnder != IntPtr.Zero)
             return; // the overlay above a preview takes all input anyway
+        if (IsSheet)
+        {
+            ApplySheetRegion();
+            return;
+        }
 
         var pen = new Pen(Brushes.Black, HitMargin * 2) { LineJoin = PenLineJoin.Round };
         var rim = _outline.GetWidenedPathGeometry(pen, 0.5, ToleranceType.Absolute);
@@ -872,6 +893,25 @@ internal sealed partial class SpaceWindow : IDisposable
         SetRegion(region);
     }
 
+    /// <summary>A sheet takes the mouse only on its ink (see <see cref="Sheets.HitRects"/>); everywhere else clicks reach the app.</summary>
+    private void ApplySheetRegion()
+    {
+        double scale = Dpi.Scale;
+        IntPtr region = Win32.CreateRectRgn(0, 0, 0, 0);
+        foreach (var r in Sheets.HitRects(_record, _toScreen))
+        {
+            IntPtr part = Win32.CreateRectRgn(
+                (int)Math.Floor((r.Left - _world.X) * scale), (int)Math.Floor((r.Top - _world.Y) * scale),
+                (int)Math.Ceiling((r.Right - _world.X) * scale), (int)Math.Ceiling((r.Bottom - _world.Y) * scale));
+            Win32.CombineRgn(region, region, part, Win32.RGN_OR);
+            Win32.DeleteObject(part);
+        }
+        if (_region != IntPtr.Zero)
+            Win32.DeleteObject(_region);
+        _region = Copy(region); // put back after floating (see RestoreRegion)
+        SetRegion(region);
+    }
+
     /// <summary>The click-through shape back on the window after floating: made afresh if the shape changed meanwhile.</summary>
     private void RestoreRegion()
     {
@@ -900,7 +940,7 @@ internal sealed partial class SpaceWindow : IDisposable
     {
         if (_ink is null)
         {
-            _ink = new InkLayer(_gpu, _size.Width, _size.Height, Dpi.Scale, _world.TopLeft, _outline, Themes.InkOf(_theme)) { ThemeAccent = Themes.AccentOf(_theme) };
+            _ink = new InkLayer(_gpu, _size.Width, _size.Height, Dpi.Scale, _world.TopLeft, _outline, ThemeInk) { ThemeAccent = Themes.AccentOf(_theme) };
             DrawInk();
         }
         return _ink;
@@ -1040,7 +1080,7 @@ internal sealed partial class SpaceWindow : IDisposable
         if (_stroke.Count == 0)
         {
             _strokePen = Pen;
-            _strokeColor = InkColors.Resolve(_strokePen.Color, Themes.InkOf(_theme));
+            _strokeColor = InkColors.Resolve(_strokePen.Color, ThemeInk);
             _stroke = [_pressedAt];
             _inkDirty = InkLayer.Union(_inkDirty, EnsureInk().AddSegment(_pressedAt, _pressedAt, _strokePen.Thickness, _strokeColor));
             PaintingStarted?.Invoke(this);

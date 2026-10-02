@@ -101,7 +101,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     internal IEnumerable<SpaceRecord> Records => _spaces.Select(s => s.Record);
 
     /// <summary>Current outlines on screen, in screen DIPs.</summary>
-    public IEnumerable<Geometry> Outlines => _spaces.Select(s => (Geometry)s.Outline);
+    public IEnumerable<Geometry> Outlines => _spaces.Where(s => !s.IsSheet).Select(s => (Geometry)s.Outline);
 
     /// <summary>
     /// Opens the saved spaces: desktop-level ones where they were, app ones on their app's window if
@@ -175,7 +175,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     /// <returns>false when there was no space to remove.</returns>
     public bool RemoveAt(Point point)
     {
-        var showing = _spaces.Where(s => s.Window.IsShowing).ToList();
+        var showing = _spaces.Where(s => s.Window.IsShowing && !s.IsSheet).ToList();
         int index = IndexToRemove([.. showing.Select(s => (Geometry)s.Outline)], point);
         if (index < 0)
             return false;
@@ -210,6 +210,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         int changed = 0;
         foreach (var space in _spaces.ToList())
         {
+            if (space.IsSheet)
+                continue;
             if (!space.Window.IsShowing || !space.Outline.Bounds.IntersectsWith(reach))
                 continue;
 
@@ -280,11 +282,11 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     /// <summary>The space window the mouse is on (not just near its rim), or zero.</summary>
     public IntPtr SpaceUnderCursor() => HoveredSpace(out _)?.Window.Handle ?? IntPtr.Zero;
 
-    /// <summary>What the mouse is on: nothing, a space, or text on a space.</summary>
+    /// <summary>What the mouse is on: nothing, a space, text on a space, or screen notes.</summary>
     public Hover HoverAtCursor()
     {
         var space = HoveredSpace(out var at);
-        return space is null ? Hover.None : NoteAt(space, at) is null ? Hover.Space : Hover.Note;
+        return space is null ? Hover.None : space.IsSheet ? Hover.Sheet : NoteAt(space, at) is null ? Hover.Space : Hover.Note;
     }
 
     /// <summary>The app window the space under the mouse sits on (zero: desktop level), else the app in front: where C draws.</summary>
@@ -369,7 +371,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
             return false;
 
         space.Redo.Push(batch);
-        space.Window.RedrawInk();
+        ShowInk(space);
         Persist();
         return true;
     }
@@ -383,7 +385,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
 
         foreach (var ink in batch.Reverse())
             space.Record.PutBack(ink);
-        space.Window.RedrawInk();
+        ShowInk(space);
         Persist();
         return true;
     }
@@ -425,6 +427,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         }
         space.Redo.Clear();
         space.Window.Select(moved); // the selection follows the new versions (this redraws)
+        if (space.IsSheet)
+            FitSheet(space);
         Persist();
     }
 
@@ -451,7 +455,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     /// <returns>null when no space is showing there.</returns>
     public MovingSpace? PickUp(Point at, IntPtr overlay)
     {
-        var space = _spaces.LastOrDefault(s => s.Window.IsShowing && s.Window.Contains(at));
+        var space = _spaces.LastOrDefault(s => !s.IsSheet && s.Window.IsShowing && s.Window.Contains(at));
         if (space is null)
             return null;
         if (space.Stretched)
@@ -553,7 +557,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         IntPtr host = AppWindows.WindowAt(at);
         Bake(space); // text goes where it is shown
         space.Record.Host = Describe(host);
-        var crossed = _spaces.Where(s => s != space && SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, space.Outline)).ToList();
+        var crossed = _spaces.Where(s => s != space && !s.IsSheet && SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, space.Outline)).ToList();
         if (crossed.Count == 0)
         {
             Rest(space);
@@ -598,7 +602,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     {
         var outline = SpaceGeometry.Decode(drawn);
         var crossed = crossing
-            ?? _spaces.Where(s => SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, outline)).ToList();
+            ?? _spaces.Where(s => !s.IsSheet && SameLayer(s.Window.Host, host) && SpaceGeometry.Overlap(s.Outline, outline)).ToList();
         foreach (var space in crossed)
             Bake(space);
 
@@ -759,6 +763,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
 
     private static void Reshape(Space space)
     {
+        if (space.IsSheet)
+            RefitSheet(space);
         space.Stretched = false;
         space.Following = false;
         space.Shown = space.ToScreen;
@@ -914,7 +920,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         }
         IntPtr previousApp = Win32.GetForegroundWindow();
 
-        var entry = new TextEntry(origin, draft, Themes.InkOf(Theme));
+        var entry = new TextEntry(origin, draft, space.IsSheet ? Themes.SheetInk : Themes.InkOf(Theme));
         entry.ColorPicked += color => SetPen(Pen with { Color = color });
         entry.FontSizePicked += size => SetPen(Pen with { FontSize = size });
         entry.StylePicked += (bold, italic) => SetPen(Pen with { Bold = bold, Italic = italic });
@@ -928,6 +934,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
                 foreach (var shown in _spaces.Where(s => s.Window.Editing == editing))
                     shown.Window.Editing = null; // cancelled: the note shows again as it was
             }
+            DropEmptySheet(space);
             Foreground.WhenMouseUp(() => // mid-stroke, focus stays put until the stroke is done
             {
                 Foreground.RestoreTo(previousApp);
@@ -986,9 +993,15 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
 
         owner.Redo.Clear();
         if (editing is not null && owner.Window.Editing == editing)
+        {
             owner.Window.Editing = null; // shows the kept version in its place
+            if (owner.IsSheet)
+                FitSheet(owner);
+        }
         else
-            owner.Window.RedrawInk();
+        {
+            ShowInk(owner);
+        }
         Persist();
     }
 
@@ -1007,7 +1020,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     {
         try
         {
-            store.Save(_spaces.Select(s => s.Record).Concat(_kept));
+            store.Save(_spaces.Where(s => !s.IsSheet || s.Record.Strokes.Count > 0 || s.Record.Notes.Count > 0).Select(s => s.Record).Concat(_kept)); // screen notes with nothing on them aren't kept
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -1023,6 +1036,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         None,
         Space,
         Note,
+        Sheet,
     }
 
     /// <summary>A space picked up with Ctrl+Alt+M (see <see cref="PickUp"/>).</summary>
@@ -1068,6 +1082,9 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     internal sealed class Space(SpaceRecord record, PathGeometry shape, SpaceWindow window, Matrix toScreen)
     {
         public SpaceRecord Record { get; } = record;
+
+        /// <summary>Whether this is screen notes rather than a space.</summary>
+        public bool IsSheet => Record.Kind == SpaceKind.Sheet;
 
         private PathGeometry? _outline;
         private Matrix _outlineFor;

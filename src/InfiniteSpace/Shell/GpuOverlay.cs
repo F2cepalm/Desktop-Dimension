@@ -365,7 +365,7 @@ internal abstract class GpuOverlay : IFramePart
     }
 
     /// <summary>Runs once the current message is handled (closing from inside one of its own messages is not safe).</summary>
-    private void Later(Action action) => Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Normal, action);
+    protected void Later(Action action) => Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Normal, action);
 
     private static bool Down(int key) => (Win32.GetKeyState(key) & 0x8000) != 0;
 

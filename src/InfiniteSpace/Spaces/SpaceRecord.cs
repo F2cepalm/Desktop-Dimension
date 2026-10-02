@@ -26,6 +26,10 @@ internal sealed class SpaceRecord
     /// <summary>Text typed on the space.</summary>
     public List<TextNote> Notes { get; set; } = [];
 
+    /// <summary>Whether this is a space or screen notes; spaces from before screen notes existed are spaces.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public SpaceKind Kind { get; set; }
+
     /// <summary>The app window the space sits on; null for a space at desktop level.</summary>
     public HostInfo? Host { get; set; }
 

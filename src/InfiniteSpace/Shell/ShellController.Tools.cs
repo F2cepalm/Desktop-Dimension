@@ -21,10 +21,27 @@ internal sealed partial class ShellController
     /// <summary>Picks a tool (see the plan's decisions D2–D5).</summary>
     private void SelectTool(Tool tool, ToolSource source)
     {
+        var info = ToolCatalog.Of(tool);
+        if (info.IsStub)
+        {
+            _tray?.Notify(info.Name, "Coming soon.");
+            return; // placeholders don't change the tool
+        }
         switch (tool)
         {
-            case Tool.Hand or Tool.Pen or Tool.Text:
-                spaces.SetTool(tool); // Phase 4: Pen/Text from the wheel or toolbar open the screen overlay
+            case Tool.Hand:
+                CloseOverlay(); // a screen-wide tool, if one is open (its closing sets the hand too)
+                spaces.SetTool(Tool.Hand);
+                break;
+            case Tool.Pen or Tool.Text when source == ToolSource.SpaceKey:
+                spaces.SetTool(tool); // only inside spaces: elsewhere the mouse stays the system's
+                break;
+            case Tool.Pen or Tool.Text:
+                FadeInkTools();
+                IntPtr focus = Foreground.CaptureHost();
+                var mode = tool == Tool.Pen ? ScreenInkMode.Pen : ScreenInkMode.Text;
+                ShowOverlay(new ScreenInkOverlay(mode, spaces, universe, t => SelectTool(t, ToolSource.OverlayKey)), focus, endsInHand: true);
+                spaces.SetTool(tool); // after ShowOverlay: closing the overlay it replaced set the hand
                 break;
             case Tool.Cube:
                 StartBlock(source == ToolSource.SpaceKey ? spaces.HostAtCursor() : Foreground.CaptureHost());
