@@ -81,6 +81,8 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
             unavailable.Add("Ctrl+Alt+M");
         if (_hotkeys.Register(ModifierKeys.Control | ModifierKeys.Alt, Key.E, RemoveSpace) is null)
             unavailable.Add("Ctrl+Alt+E");
+        if (_hotkeys.Register(ModifierKeys.Control | ModifierKeys.Alt, Key.F, SaveSpaceUnderMouse) is null)
+            unavailable.Add("Ctrl+Alt+F");
         RegisterWheelHotkey(unavailable);
 
         _undoKeys =

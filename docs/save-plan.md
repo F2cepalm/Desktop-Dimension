@@ -1,6 +1,11 @@
 # Plan: save a space to a file (.isf)
 
-Written 2 October 2026. Status: **waiting for approval**. Sections 1 and 2 hold the questions that need answers first.
+Written 2 October 2026. Status: **implemented**. The decisions on 2 October 2026 change parts of the plan below:
+- Save is on **Ctrl+Alt+F**, and Ctrl+Alt+S still draws a space.
+- The wheel and toolbar grow to **10 tools**: **Save** and a new **Open saved space** tool, which shows an Open dialog and places the space where the wheel opened.
+- The extension is **`.spsf`**, not `.isf`. This removes the clash with Microsoft's ink format.
+- There is no drag-and-drop opening and no file association.
+- Clicking the "Saved" notice doesn't open the folder: tray notices can't take clicks yet.
 
 You point at a space and press the save hotkey, or pick **Save** on the wheel or the toolbar. A Save dialog opens in a folder that only this app uses, with a file name already filled in. The space is written to one self-contained `.isf` file.
 

@@ -20,6 +20,8 @@ internal static class ToolCatalog
         new(Tool.TextWrap, "Text wrap", "Turn text selected in an app into a space", Key.W, false, ToolIcons.Wrap),
         new(Tool.Eraser, "Eraser", "Erase strokes and notes", Key.E, false, ToolIcons.Eraser),
         new(Tool.List, "List", "Coming soon", null, true, ToolIcons.List),
+        new(Tool.Save, "Save", "Save the space under the mouse to a file (Ctrl+Alt+F)", null, false, ToolIcons.Save),
+        new(Tool.Open, "Open saved space", "Put a saved space back on screen", null, false, ToolIcons.Open),
     ];
 
     /// <summary>How menus show a tool.</summary>

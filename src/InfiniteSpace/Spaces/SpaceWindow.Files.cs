@@ -77,6 +77,13 @@ internal sealed partial class SpaceWindow
         _scrolls[note] = target;
     }
 
+    /// <summary>A splash at a screen DIP point, to show which space something happened to.</summary>
+    public void Splash(Point at)
+    {
+        if (!_disposed)
+            _look.AddBurst(at);
+    }
+
     /// <summary>
     /// A file just opened here: a splash where it landed, its text fading in, and in the Dreamy
     /// theme a little wobble of the space.

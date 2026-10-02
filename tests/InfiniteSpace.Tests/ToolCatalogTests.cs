@@ -11,19 +11,19 @@ public class ToolCatalogTests
     public void EveryTool_IsListed_InTheEnumsOrder()
     {
         Assert.Equal(Enum.GetValues<Tool>(), ToolCatalog.All.Select(t => t.Tool));
-        Assert.Equal(8, ToolCatalog.All.Count);
+        Assert.Equal(10, ToolCatalog.All.Count);
     }
 
     [Fact]
     public void ProjectMeterAndList_ArePlaceholders()
     {
-        Assert.Equal([false, false, false, false, true, false, false, true], ToolCatalog.All.Select(t => t.IsStub));
+        Assert.Equal([false, false, false, false, true, false, false, true, false, false], ToolCatalog.All.Select(t => t.IsStub));
     }
 
     [Fact]
     public void TheRealTools_HaveKeys_HPTCWE()
     {
-        Assert.Equal<Key?>([Key.H, Key.P, Key.T, Key.C, null, Key.W, Key.E, null], ToolCatalog.All.Select(t => t.Key));
+        Assert.Equal<Key?>([Key.H, Key.P, Key.T, Key.C, null, Key.W, Key.E, null, null, null], ToolCatalog.All.Select(t => t.Key));
     }
 
     [Fact]

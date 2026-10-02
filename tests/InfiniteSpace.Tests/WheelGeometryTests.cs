@@ -5,18 +5,16 @@ namespace InfiniteSpace.Tests;
 
 public class WheelGeometryTests
 {
-    [Theory]
-    [InlineData(0, -80, 0)]
-    [InlineData(60, -60, 1)]
-    [InlineData(80, 0, 2)]
-    [InlineData(60, 60, 3)]
-    [InlineData(0, 80, 4)]
-    [InlineData(-60, 60, 5)]
-    [InlineData(-80, 0, 6)]
-    [InlineData(-60, -60, 7)]
-    public void ADirection_PointsAtItsSector(double x, double y, int sector)
+    [Fact]
+    public void ADirection_PointsAtItsSector_ClockwiseFromTheTop()
     {
-        Assert.Equal(sector, WheelGeometry.SegmentAt(new Vector(x, y), 40));
+        Assert.Equal(10, WheelGeometry.Count); // one per tool
+        for (int sector = 0; sector < WheelGeometry.Count; sector++)
+        {
+            double radians = WheelGeometry.MiddleOf(sector) * Math.PI / 180;
+            var direction = new Vector(80 * Math.Sin(radians), -80 * Math.Cos(radians));
+            Assert.Equal(sector, WheelGeometry.SegmentAt(direction, 40));
+        }
     }
 
     [Fact]

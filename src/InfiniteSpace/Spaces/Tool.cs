@@ -11,4 +11,6 @@ internal enum Tool
     TextWrap,
     Eraser,
     List,
+    Save,
+    Open,
 }

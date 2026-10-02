@@ -38,6 +38,9 @@ internal sealed class AppSettings
     /// <summary>The tool wheel's hotkey, as in "Ctrl+Alt+`"; null uses the default (others are tried if it is taken).</summary>
     public string? ToolWheelHotkey { get; set; }
 
+    /// <summary>The folder spaces were last saved to or opened from; null for this app's own in Documents.</summary>
+    public string? SaveDirectory { get; set; }
+
     /// <summary>Whether the toolbar (the square with three dots) is on screen.</summary>
     public bool ShowToolbar { get; set; } = true;
 

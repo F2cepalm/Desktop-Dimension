@@ -7,7 +7,7 @@ namespace InfiniteSpace.Shell;
 internal static class WheelGeometry
 {
     /// <summary>How many sectors the wheel has.</summary>
-    public const int Count = 8;
+    public static readonly int Count = ToolCatalog.All.Count;
 
     /// <summary>The middle of sector <paramref name="index"/>, in degrees clockwise from straight up.</summary>
     public static double MiddleOf(int index) => index * 360.0 / Count;

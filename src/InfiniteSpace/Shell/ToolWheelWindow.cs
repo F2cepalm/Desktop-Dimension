@@ -21,9 +21,10 @@ internal sealed class ToolWheelWindow : Window
     public const double Inner = 40;
 
     /// <summary>The outer radius of the ring (DIPs).</summary>
-    public const double Outer = 116;
+    public const double Outer = 130; // room for ten sectors' labels
 
     private const double Side = 300;
+    private const double LabelWidth = 64; // narrower than a sector at the labels' radius, so neighbours never touch
 
     private readonly Canvas _canvas;
     private readonly Path[] _sectors = new Path[WheelGeometry.Count];
@@ -84,13 +85,13 @@ internal sealed class ToolWheelWindow : Window
             {
                 Text = info.IsStub ? info.Name + "\nsoon" : info.Name,
                 FontSize = 10.5,
-                Width = 76,
+                Width = LabelWidth,
                 TextAlignment = TextAlignment.Center,
                 Foreground = fore,
                 IsHitTestVisible = false,
             };
-            label.Measure(new Size(76, double.PositiveInfinity));
-            Canvas.SetLeft(label, labelAt.X - 38);
+            label.Measure(new Size(LabelWidth, double.PositiveInfinity));
+            Canvas.SetLeft(label, labelAt.X - LabelWidth / 2);
             Canvas.SetTop(label, labelAt.Y - label.DesiredSize.Height / 2);
             _canvas.Children.Add(label);
 

@@ -39,6 +39,11 @@ internal sealed partial class ShellController
             _tray?.Notify(info.Name, "Coming soon.");
             return; // placeholders don't change the tool
         }
+        if (tool is Tool.Save or Tool.Open)
+        {
+            SaveOrOpenFromMenu(tool, source); // actions, not tools: the tool stays
+            return;
+        }
         if (tool == Tool.TextWrap)
         {
             WrapSelection(fromKey: false); // an action, not a tool: the tool stays
@@ -110,7 +115,8 @@ internal sealed partial class ShellController
         CloseOverlay(); // a screen-wide tool ends (and hands focus back) before the wheel takes it
         FadeInkTools();
         IntPtr previousApp = Foreground.CaptureHost();
-        var wheel = new ToolWheelWindow(CursorOnScreen(), Themes.ChromeOf(spaces.Theme), spaces.Tool);
+        _wheelAt = CursorOnScreen();
+        var wheel = new ToolWheelWindow(_wheelAt.Value, Themes.ChromeOf(spaces.Theme), spaces.Tool);
         wheel.Gone += () =>
         {
             if (_wheel == wheel)
