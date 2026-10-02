@@ -1,6 +1,11 @@
 # Plan: cursor fixes and text cards
 
-Written 2 October 2026 for another model to implement. Status: **not started**.
+Written 2 October 2026 for another model to implement. Status: **implemented** (phases 1–4 committed 2 October 2026; built with no warnings on Linux, but the tests and perf run need Windows and the manual checks are pending).
+
+Where the implementation differs from the plan:
+- **F7:** a card stays a card even when its text is erased. Undo can bring the text back, and it should come back as a card.
+- **Refits:** cards refit wherever ink is shown again (`ShowInk`), which covers edits, undo, redo and erasing.
+- **Reshaping:** the rule is the pure `CardBounds`, so it can be unit tested.
 
 This plan fixes three problems the user found in the real app:
 
