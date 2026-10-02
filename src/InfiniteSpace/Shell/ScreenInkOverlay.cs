@@ -146,7 +146,7 @@ internal sealed class ScreenInkOverlay : GpuOverlay
             }
             return true;
         }
-        if (modifiers == ModifierKeys.None && ToolCatalog.ForKey(key) is { } tool && tool != ToolOfMode)
+        if (modifiers == ModifierKeys.None && ToolCatalog.ForKey(key) is { } tool && tool != ToolOfMode && tool != Tool.TextWrap)
         {
             Later(() => _selectTool(tool)); // not from inside this overlay's own message: picking may close it
             return true;

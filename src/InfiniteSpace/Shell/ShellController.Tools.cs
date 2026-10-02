@@ -25,6 +25,9 @@ internal sealed partial class ShellController
     private ToolWheelWindow? _wheel;
     private string? _wheelHotkey;
     private ToolbarWindow? _toolbar;
+    private readonly SelectionWatch _selection = new(LetterKeysAfterMouseMove, minDrag: 6, TimeSpan.FromMilliseconds(System.Windows.Forms.SystemInformation.DoubleClickTime));
+    private HoverKey? _wrapKey;
+    private bool _wrapping;
 
     /// <summary>Picks a tool (see the plan's decisions D2–D5).</summary>
     private void SelectTool(Tool tool, ToolSource source)
@@ -35,6 +38,11 @@ internal sealed partial class ShellController
         {
             _tray?.Notify(info.Name, "Coming soon.");
             return; // placeholders don't change the tool
+        }
+        if (tool == Tool.TextWrap)
+        {
+            WrapSelection(fromKey: false); // an action, not a tool: the tool stays
+            return;
         }
         switch (tool)
         {
@@ -117,6 +125,73 @@ internal sealed partial class ShellController
         wheel.Show();
         wheel.Activate();
     }
+
+    /// <summary>
+    /// Text wrap: the text selected in the app in front becomes a space of the selection's size on that
+    /// app, with the same text inside in its size, colour, weight and slant (as far as the app tells).
+    /// </summary>
+    /// <param name="fromKey">W pressed after a selection: if nothing turns out to be selected, the W is typed into the app after all.</param>
+    private async void WrapSelection(bool fromKey)
+    {
+        if (_wrapping)
+            return;
+        _wrapping = true;
+        var dragged = _selection.Area;
+        _selection.Forget();
+        UpdateHoverKeys(); // W goes back to the apps
+        try
+        {
+            if (!fromKey)
+                await Task.Delay(120); // the wheel just handed focus back to the app: let it settle
+            var found = await Task.Run(TextSelection.FromAutomation);
+            if (found is null && fromKey && dragged is { } drag && await TextSelection.CopyAsync() is { } copied)
+            {
+                // The app doesn't tell where its text is: the area the mouse dragged over, a line tall at least.
+                var area = new Rect(drag.X / Dpi.Scale, drag.Y / Dpi.Scale, drag.Width / Dpi.Scale, drag.Height / Dpi.Scale);
+                double line = spaces.Pen.FontSize * NoteText.LineSpacing;
+                area.Inflate(0, Math.Max(0, (line - area.Height) / 2) + line / 2);
+                found = new SelectedText(copied, area, null, null, spaces.Pen.Bold, spaces.Pen.Italic, null);
+            }
+            if (found is not { Bounds: { } bounds })
+            {
+                if (fromKey)
+                    TextSelection.SendKey(TextSelection.VK_W);
+                else
+                    _tray?.Notify("Text wrap", "Select some text in an app first, then pick Text wrap (or press W).");
+                return;
+            }
+            // The size it shows at (zoom included) is its line height; the app's own point size otherwise.
+            double size = found.LineHeight is { } height ? height / NoteText.LineSpacing
+                : found.PointSize is { } points ? points * 96 / 72
+                : spaces.Pen.FontSize;
+            IntPtr host = AppWindows.WindowAt(new Point(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2));
+            if (!spaces.WrapText(found.Text, bounds, host, size, found.Bold, found.Italic, found.Color))
+                _tray?.Notify("Text wrap", "That selection is too small for a space.");
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            logger.LogWarning(ex, "Text wrap failed");
+        }
+        finally
+        {
+            _wrapping = false;
+        }
+    }
+
+    /// <summary>Whether a screen point (device pixels) is in an app's client area, where a drag selects text (not this app, nor a title bar or frame).</summary>
+    private static bool OnAppText(Win32.POINT p)
+    {
+        IntPtr window = Win32.WindowFromPoint(p);
+        if (window == IntPtr.Zero || Foreground.IsOwn(window))
+            return false;
+        const int WM_NCHITTEST = 0x0084, HTCLIENT = 1;
+        const uint SMTO_ABORTIFHUNG = 2;
+        var lParam = new IntPtr(((p.Y & 0xFFFF) << 16) | (p.X & 0xFFFF));
+        return SendMessageTimeout(window, WM_NCHITTEST, IntPtr.Zero, lParam, SMTO_ABORTIFHUNG, 30, out var hit) != IntPtr.Zero && hit == HTCLIENT;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessageTimeout(IntPtr window, int message, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
 
     /// <summary>Puts the toolbar on screen, where it was left (or at the primary screen's right edge).</summary>
     private void OpenToolbar()

@@ -133,6 +133,14 @@ internal static class Scenarios
         bench.Spaces.Undo(spaceWindow.Handle);
         Check(painted.Strokes.Single().Points.Length > 0, "undo brings the erased paint back");
         eraser.Dismiss();
+
+        int before = bench.Spaces.Count;
+        var selection = new Rect(Bench.X + 20, Bench.Y + 320, 160, 26);
+        Check(bench.Spaces.WrapText("Wrapped words", selection, IntPtr.Zero, 18, bold: true, italic: false, System.Windows.Media.Colors.White), "selected text wraps into a space");
+        var wrapped = bench.Spaces.Records.Last();
+        var bounds = SpaceGeometry.Decode(wrapped).Bounds;
+        Check(bench.Spaces.Count == before + 1 && bounds.Contains(selection) && bounds.Width - selection.Width <= 2 * DreamStyle.ArtPixel, $"the space is the selection's size ({bounds.Width:0} × {bounds.Height:0})");
+        Check(wrapped.Notes.Single() is { Text: "Wrapped words", Bold: true } note && note.Width == bounds.Width, "it holds the text, styled, wrapped at its width");
         return [timer.Finish(), sweep.Finish()];
     }
 

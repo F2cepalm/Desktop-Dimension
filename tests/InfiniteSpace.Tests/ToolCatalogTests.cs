@@ -15,15 +15,15 @@ public class ToolCatalogTests
     }
 
     [Fact]
-    public void ProjectMeterTextWrapAndList_ArePlaceholders()
+    public void ProjectMeterAndList_ArePlaceholders()
     {
-        Assert.Equal([false, false, false, false, true, true, false, true], ToolCatalog.All.Select(t => t.IsStub));
+        Assert.Equal([false, false, false, false, true, false, false, true], ToolCatalog.All.Select(t => t.IsStub));
     }
 
     [Fact]
-    public void TheRealTools_HaveKeys_HPTCE()
+    public void TheRealTools_HaveKeys_HPTCWE()
     {
-        Assert.Equal<Key?>([Key.H, Key.P, Key.T, Key.C, null, null, Key.E, null], ToolCatalog.All.Select(t => t.Key));
+        Assert.Equal<Key?>([Key.H, Key.P, Key.T, Key.C, null, Key.W, Key.E, null], ToolCatalog.All.Select(t => t.Key));
     }
 
     [Fact]

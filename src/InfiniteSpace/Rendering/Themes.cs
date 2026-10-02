@@ -82,6 +82,20 @@ internal static class Themes
         _ => new(Colors.Black, Colors.White, Colors.White, Color.FromRgb(0x5F, 0xCD, 0xE4), 2, 0), // Dreamy: a dream block, square like its pixels
     };
 
+    /// <summary>The WCAG contrast ratio of two opaque colours (1 to 21).</summary>
+    public static double Contrast(Color a, Color b)
+    {
+        double la = Luminance(a), lb = Luminance(b);
+        return (Math.Max(la, lb) + 0.05) / (Math.Min(la, lb) + 0.05);
+
+        static double Luminance(Color c) => 0.2126 * Linear(c.R) + 0.7152 * Linear(c.G) + 0.0722 * Linear(c.B);
+        static double Linear(byte channel)
+        {
+            double v = channel / 255.0;
+            return v <= 0.03928 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+        }
+    }
+
     /// <summary>A look for one space in this theme.</summary>
     public static ISpaceLook CreateLook(string theme) => theme switch
     {

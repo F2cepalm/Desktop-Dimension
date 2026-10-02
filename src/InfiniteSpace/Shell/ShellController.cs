@@ -89,8 +89,9 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
             new(ModifierKeys.Control, Key.Y, () => spaces.Redo(spaces.SpaceUnderCursor()), repeat: true),
         ];
         _toolKeys = [.. ToolCatalog.All
-            .Where(t => t.Key is not null)
+            .Where(t => t.Key is not null && t.Tool != Tool.TextWrap) // W is text wrap's only after a selection
             .Select(t => new HoverKey(ModifierKeys.None, t.Key!.Value, () => SelectTool(t.Tool, ToolSource.SpaceKey)))];
+        _wrapKey = new(ModifierKeys.None, Key.W, () => WrapSelection(fromKey: true));
         _groupKeys =
         [
             new(ModifierKeys.Control, Key.G, () => spaces.GroupUnderCursor(group: true)),
@@ -192,6 +193,8 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         if (_hotkeys is null)
             return;
         bool moved = Win32.GetCursorPos(out var p) && _cursor.Sample(new Point(p.X, p.Y), _clock.Elapsed);
+        _selection.Sample((Win32.GetAsyncKeyState(Win32.VK_LBUTTON) & 0x8000) != 0, new Point(p.X, p.Y), _clock.Elapsed, () => OnAppText(p));
+        _wrapKey?.Hold(_hotkeys, !_wrapping && _overlay is null && _wheel is null && !spaces.IsTyping && _selection.IsRecent(_clock.Elapsed));
         var hover = _overlay is null && _wheel is null && !spaces.IsTyping ? spaces.HoverAtCursor() : SpaceManager.Hover.None;
         bool onSpace = hover is SpaceManager.Hover.Space or SpaceManager.Hover.Note;
         // Over screen notes' ink the mouse may only be resting there: the app keeps its keys then, as for the letters.
