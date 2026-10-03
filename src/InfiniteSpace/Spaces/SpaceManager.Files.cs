@@ -22,40 +22,35 @@ internal sealed partial class SpaceManager
 
     /// <summary>
     /// Opens text and Markdown files on the space at a screen DIP point, the first with its top-left
-    /// there, each further one a step down and to the right.
+    /// there, each further one a step down and to the right. They arrive once read (see the other overload).
     /// </summary>
-    /// <returns>How many were opened.</returns>
-    public int OpenFiles(IReadOnlyList<string> paths, Point at) =>
-        SpaceAt(at) is { } space ? OpenFiles(space, paths, at) : 0;
+    public void OpenFiles(IReadOnlyList<string> paths, Point at)
+    {
+        if (SpaceAt(at) is { } space)
+            OpenFiles(space, paths, at);
+    }
 
     private Space? SpaceAt(Point at) => _spaces.LastOrDefault(s => !s.IsSheet && s.Window.IsShowing && s.Window.Contains(at));
 
-    private int OpenFiles(Space space, IReadOnlyList<string> paths, Point at)
+    /// <remarks>
+    /// The files are read on another thread: a slow disk, a network share or a cloud file that is
+    /// fetched first would otherwise hold up every frame meanwhile. They land once read, if their space
+    /// is still there.
+    /// </remarks>
+    private async void OpenFiles(Space space, IReadOnlyList<string> paths, Point at)
     {
+        var read = await Task.Run(() => paths.Select(ReadFile).ToList());
+        if (!_spaces.Contains(space))
+            return; // the space went (merged, removed, put away) while the files were read
+
         var problems = new List<string>();
         var opened = new List<(TextNote Note, Point At)>();
         var bounds = space.Outline.Bounds;
-        foreach (string path in paths)
+        foreach (var (path, text, problem) in read)
         {
-            string name = Path.GetFileName(path);
-            if (!TextFiles.IsSupported(path))
+            if (problem is not null)
             {
-                problems.Add($"{name} is not a text (.txt) or Markdown (.md) file.");
-                continue;
-            }
-            string text;
-            try
-            {
-                text = TextFiles.Read(path).TrimEnd(); // as the text box keeps it, so opening it to edit changes nothing
-            }
-            catch (TextFileException ex)
-            {
-                problems.Add(ex.Message);
-                continue;
-            }
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                problems.Add($"{name} is empty.");
+                problems.Add(problem);
                 continue;
             }
 
@@ -101,7 +96,24 @@ internal sealed partial class SpaceManager
         }
         if (problems.Count > 0)
             Notice?.Invoke(problems.Count == 1 && opened.Count == 0 ? "That file wasn't opened" : "Some files weren't opened", string.Join("\n", problems));
-        return opened.Count;
+    }
+
+    /// <summary>A file's text, as the text box keeps it (so opening it to edit changes nothing), or why it can't be opened.</summary>
+    private static (string Path, string Text, string? Problem) ReadFile(string path)
+    {
+        string name = Path.GetFileName(path);
+        if (!TextFiles.IsSupported(path))
+            return (path, "", $"{name} is not a text (.txt) or Markdown (.md) file.");
+        string text;
+        try
+        {
+            text = TextFiles.Read(path).TrimEnd();
+        }
+        catch (TextFileException ex)
+        {
+            return (path, "", ex.Message);
+        }
+        return string.IsNullOrWhiteSpace(text) ? (path, "", $"{name} is empty.") : (path, text, null);
     }
 
     /// <summary>Longest text taken from a drop, in characters (as much as a file opened on a space).</summary>

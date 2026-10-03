@@ -117,6 +117,14 @@ internal sealed class FrameTimer(string action, string theme, GpuCompositor? gpu
 internal static class Ui
 {
     /// <summary>Lets the dispatcher run (queued frames, timers, window messages) for a while.</summary>
+    /// <summary>Lets the UI thread run until <paramref name="done"/> holds (or the time is up): work that lands from another thread.</summary>
+    public static void PumpUntil(Func<bool> done, int milliseconds = 3000)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (!done() && clock.ElapsedMilliseconds < milliseconds)
+            Pump(5);
+    }
+
     public static void Pump(int milliseconds)
     {
         var frame = new DispatcherFrame();

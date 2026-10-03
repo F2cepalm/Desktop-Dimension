@@ -60,10 +60,13 @@ internal static class FileScenarios
         var window = bench.Windows[0];
         var at = new Point(bounds.X + 30, bounds.Y + 30);
 
+        // Files are read on another thread and land on the UI thread once read: the frame they land in is timed.
+        Drop(window.Handle, [markdown, plain], at);
+        var record = bench.Spaces.Records.Single();
         var drop = new FrameTimer("files: dropped (two)", theme, bench.Gpu);
         drop.Frame(() =>
         {
-            Drop(window.Handle, [markdown, plain], at);
+            Ui.PumpUntil(() => record.Notes.Count(n => n.File is not null) == 2);
             bench.Universe.Tick();
         });
         var arrive = new FrameTimer("files: fading in", theme, bench.Gpu);
@@ -109,10 +112,12 @@ internal static class FileScenarios
         using var bench = new Bench(theme, [Bench.Record(bounds, ink: false)]);
         var window = bench.Windows[0];
         var at = new Point(bounds.X + 30, bounds.Y + 30);
+        Drop(window.Handle, [path], at);
+        var record = bench.Spaces.Records.Single();
         var drop = new FrameTimer("big file: dropped (1 MB)", theme, bench.Gpu);
         drop.Frame(() =>
         {
-            Drop(window.Handle, [path], at);
+            Ui.PumpUntil(() => record.Notes.Any(n => n.File is not null)); // read on another thread, laid out here
             bench.Universe.Tick();
         });
         Ui.Pump(500);
