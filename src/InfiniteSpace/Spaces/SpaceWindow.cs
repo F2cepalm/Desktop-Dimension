@@ -505,7 +505,9 @@ internal sealed partial class SpaceWindow : IDisposable
             if (_selected.RemoveWhere(i => !live.Contains(i)) > 0)
                 _framesStale = true;
         }
-        _inkDirty = _ink!.Redraw(_record, _toScreen, _editing, PlaceNotes, _arrivals.Count > 0 ? NoteOpacity : null, PlaceStrokes, Adornments());
+        // Mid-drag, the ink that stays put is painted once and copied (see InkLayer.Redraw), unless files glide or fade in.
+        var moving = _gesture == Gesture.MovingSelection && _selectionDrag != default && _arrivals.Count == 0 && !FilesMoving ? _movingNow : null;
+        _inkDirty = _ink!.Redraw(_record, _toScreen, _editing, PlaceNotes, _arrivals.Count > 0 ? NoteOpacity : null, PlaceStrokes, Adornments(), moving);
     }
 
     /// <summary>

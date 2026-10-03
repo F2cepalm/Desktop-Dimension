@@ -46,6 +46,8 @@ internal sealed class InkLayer : IDisposable
     private readonly List<Segment> _pending = [];
     private ID2D1Bitmap1? _ink;
     private ID2D1Bitmap1? _mask;
+    private ID2D1Bitmap1? _still;             // the ink that stays put while a selection is dragged (see Redraw)
+    private Func<IInk, bool>? _stillWithout;  // what moves over it; null when there is no still picture
     private ID2D1StrokeStyle? _round;
     private ID2D1StrokeStyle? _dashed;
     private int _capacityWidth;
@@ -103,6 +105,7 @@ internal sealed class InkLayer : IDisposable
         _outline = Outline2D.From(outline, origin);
         _maskStale = true;
         _pending.Clear();
+        _stillWithout = null; // the still picture of a drag is at the old shape
         EnsureCapacity();
     }
 
@@ -119,25 +122,103 @@ internal sealed class InkLayer : IDisposable
     /// <param name="opacity">How opaque each note is drawn (newly opened files fade in); fully, when null.</param>
     /// <param name="placeStroke">How each stroke is mapped onto the screen, when not where <paramref name="toScreen"/> places it (see <see cref="InkStroke.Placed"/>).</param>
     /// <param name="adornments">The hand's selection frames and rectangle, drawn over the ink; none when null.</param>
-    public Int32Rect Redraw(SpaceRecord record, Matrix toScreen = default, TextNote? skip = null, Func<TextNote, Point>? placeNote = null, Func<TextNote, float>? opacity = null, Func<InkStroke, Matrix>? placeStroke = null, InkAdornments? adornments = null)
+    /// <param name="moving">
+    /// The ink being dragged, while a drag lasts (the same function each frame): the rest is painted once
+    /// and kept, so each frame of the drag only copies that and draws what moves, over it. Null otherwise.
+    /// </param>
+    public Int32Rect Redraw(SpaceRecord record, Matrix toScreen = default, TextNote? skip = null, Func<TextNote, Point>? placeNote = null, Func<TextNote, float>? opacity = null, Func<InkStroke, Matrix>? placeStroke = null, InkAdornments? adornments = null, Func<IInk, bool>? moving = null)
     {
         _pending.Clear();
+        var world = World();
+        if (moving is not null && (moving == _stillWithout || PaintStill(record, toScreen, skip, placeNote, opacity, placeStroke, world, moving)))
+        {
+            var target = Begin(_ink!);
+            target.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
+            target.DrawImage(_still!, Vector2.Zero, new RawRectF(0, 0, Width, Height), InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+            DrawItems(target, record, toScreen, skip, placeNote, opacity, placeStroke, world, moving);
+            if (adornments is not null)
+                DrawAdornments(target, adornments, world);
+            target.PopAxisAlignedClip();
+            End(target);
+            return Bounds;
+        }
+
+        ReleaseStill();
         _generation++;
         var context = Begin(_ink!);
         context.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
         context.Clear(new Color4(0, 0, 0, 0));
-        var world = World();
+        DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, null);
+        if (adornments is not null)
+            DrawAdornments(context, adornments, world);
+        context.PopAxisAlignedClip();
+        End(context);
+        ForgetUnused();
+        return Bounds;
+    }
+
+    /// <summary>
+    /// Paints the ink that stays put while <paramref name="moving"/> is dragged, to be copied every frame of the drag.
+    /// </summary>
+    /// <returns>false when it can't be kept (a file is fading in): every frame then draws everything.</returns>
+    private bool PaintStill(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke, Matrix3x2 world, Func<IInk, bool> moving)
+    {
+        _stillWithout = null;
+        _still ??= _gpu.D2DContext.CreateBitmap(new SizeI(_capacityWidth, _capacityHeight), IntPtr.Zero, 0, new BitmapProperties1(GpuCompositor.Bgra, 96, 96, BitmapOptions.Target));
+        _generation++; // this frame draws all of the ink, still and moving: what isn't drawn is let go
+        var context = Begin(_still);
+        context.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
+        context.Clear(new Color4(0, 0, 0, 0));
+        bool fading = DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, item => !moving(item));
+        context.PopAxisAlignedClip();
+        End(context);
         foreach (var stroke in record.Strokes)
-            DrawStroke(context, stroke, placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor), world); // moved, never stretched
+        {
+            if (moving(stroke) && _strokes.TryGetValue(stroke, out var cached))
+                cached.Generation = _generation;
+        }
         foreach (var note in record.Notes)
         {
-            if (note == skip || note.Text.Length == 0) // an empty note was removed by editing; it is kept only for undo
+            if (moving(note) && _notes.TryGetValue(note, out var cached))
+                cached.Generation = _generation;
+            if (moving(note) && _documents.TryGetValue(note, out var document))
+                document.Generation = _generation;
+        }
+        ForgetUnused();
+        if (fading)
+            return false;
+        _stillWithout = moving;
+        return true;
+    }
+
+    /// <summary>Lets go of the still picture of a drag (see <see cref="PaintStill"/>) once the drag is over.</summary>
+    private void ReleaseStill()
+    {
+        _stillWithout = null;
+        _still?.Dispose();
+        _still = null;
+    }
+
+    /// <summary>Draws strokes, then notes, of those <paramref name="which"/> takes (all when null).</summary>
+    /// <returns>Whether a note was drawn partly see-through (a file fading in).</returns>
+    private bool DrawItems(ID2D1DeviceContext context, SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke, Matrix3x2 world, Func<IInk, bool>? which)
+    {
+        bool fading = false;
+        foreach (var stroke in record.Strokes)
+        {
+            if (which is null || which(stroke))
+                DrawStroke(context, stroke, placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor), world); // moved, never stretched
+        }
+        foreach (var note in record.Notes)
+        {
+            if (note == skip || note.Text.Length == 0 || (which is not null && !which(note))) // an empty note was removed by editing; it is kept only for undo
                 continue;
             float alpha = opacity?.Invoke(note) ?? 1;
             if (alpha <= 0)
                 continue;
             if (alpha < 1)
             {
+                fading = true;
                 context.Transform = Matrix3x2.Identity;
                 context.PushLayer(new LayerParameters1
                 {
@@ -150,12 +231,7 @@ internal sealed class InkLayer : IDisposable
             if (alpha < 1)
                 context.PopLayer();
         }
-        if (adornments is not null)
-            DrawAdornments(context, adornments, world);
-        context.PopAxisAlignedClip();
-        End(context);
-        ForgetUnused();
-        return Bounds;
+        return fading;
     }
 
     /// <summary>Adds one piece of a stroke being painted (screen DIPs); a zero-length piece is a dot.</summary>
@@ -270,6 +346,7 @@ internal sealed class InkLayer : IDisposable
         _round?.Dispose();
         _ink?.Dispose();
         _mask?.Dispose();
+        _still?.Dispose();
     }
 
     /// <summary>The selection: a dashed frame in the accent colour round each selected group or item, and the rectangle being dragged.</summary>
@@ -309,6 +386,7 @@ internal sealed class InkLayer : IDisposable
         Height = Math.Min(Height, _capacityHeight);
         _ink?.Dispose();
         _mask?.Dispose();
+        ReleaseStill(); // made again at the new size if a drag goes on
         var size = new SizeI(_capacityWidth, _capacityHeight);
         _ink = _gpu.D2DContext.CreateBitmap(size, IntPtr.Zero, 0, new BitmapProperties1(GpuCompositor.Bgra, 96, 96, BitmapOptions.Target));
         _mask = _gpu.D2DContext.CreateBitmap(size, IntPtr.Zero, 0, new BitmapProperties1(GpuCompositor.Bgra, 96, 96, BitmapOptions.Target));

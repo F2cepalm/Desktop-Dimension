@@ -15,6 +15,7 @@ internal sealed partial class SpaceWindow
     private Rect? _marquee;
     private Func<TextNote, Point>? _placeDraggedNote;
     private Func<InkStroke, Matrix>? _placeDraggedStroke;
+    private Func<IInk, bool>? _movingNow;   // what this drag moves, one function for the whole drag (see DrawInk)
     private List<Rect>? _frames;         // the selection's frames before any drag (see Adornments)
     private Matrix _framesFor;
     private bool _framesStale = true;
@@ -107,6 +108,8 @@ internal sealed partial class SpaceWindow
                     _selected.Clear(); // dragged with Ctrl: it moves alone, as without
                 _selected.UnionWith(group); // a Shift+press on something new adds it
                 _gesture = Gesture.MovingSelection;
+                var moving = new HashSet<IInk>(_selected);
+                _movingNow = moving.Contains;
             }
             else
             {

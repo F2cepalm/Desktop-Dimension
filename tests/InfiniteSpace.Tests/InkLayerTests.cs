@@ -33,6 +33,39 @@ public class InkLayerTests
     }
 
     [Fact]
+    public void ADrag_DrawnOverTheStillInk_LooksLikeEverythingDrawnAgain()
+    {
+        Gpu.Run(gpu =>
+        {
+            using var dragging = new InkLayer(gpu, 300, 200, 1, new Point(0, 0), Square(0, 0, 300), Colors.White);
+            using var whole = new InkLayer(gpu, 300, 200, 1, new Point(0, 0), Square(0, 0, 300), Colors.White);
+            var still = new InkStroke { Points = [20, 20, 280, 180], Thickness = 6 };
+            var note = new TextNote { X = 40, Y = 150, Text = "stays" };
+            var dragged = new InkStroke { Points = [30, 100, 150, 100], Thickness = 8, Color = "#FF0000" };
+            var record = new SpaceRecord { Strokes = [still, dragged], Notes = [note] };
+            var moving = new HashSet<IInk> { dragged };
+            Func<IInk, bool> isMoving = moving.Contains;
+
+            // The first frame of the drag paints the still ink; the others only copy it.
+            foreach (var offset in new[] { new Vector(0, 1), new Vector(10, 5), new Vector(40, -30), new Vector(55, 12) })
+            {
+                Matrix Place(InkStroke stroke)
+                {
+                    var m = Matrix.Identity;
+                    if (stroke == dragged)
+                        m.Translate(offset.X, offset.Y);
+                    return m;
+                }
+
+                dragging.Redraw(record, Matrix.Identity, placeStroke: Place, moving: isMoving);
+                whole.Redraw(record, Matrix.Identity, placeStroke: Place);
+
+                Assert.Equal(whole.ReadPixels(), dragging.ReadPixels()); // the dragged stroke is last, and meets no note
+            }
+        });
+    }
+
+    [Fact]
     public void InkOutsideTheSpace_IsClippedAway()
     {
         Gpu.Run(gpu =>
