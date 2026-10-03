@@ -16,6 +16,7 @@ Reported by the user on 3 October 2026, after the freeze and battery work (maste
   - **Text cards are the exception.** A text card (made with W) resizes smoothly from both sides, without much stutter, even though its text reflows live on every frame. So text alone isn't the problem. Compare the two paths:
     - Cards: `FitCardLive` sets the note's width, and the note is placed at the card's corner. Their height follows the text, so they never stretch vertically.
     - Plain spaces: `PlaceNote` pushes notes, `PlaceStroke` maps strokes, the space stretches in both directions (the jelly), and the ink layer is redrawn and its mask rebuilt every frame.
+  - **The wobble isn't the cause either.** Text cards wobble while resized, and that stays smooth too. The difference to look at is the ink: plain spaces with paint or several notes, where every frame pushes the notes, maps the strokes and redraws the whole ink layer and its mask.
   - **Not a new bug.** The user confirmed that the version before the performance work (`1d085fb`) lags too. It got worse after that work, so look for both the original cause (in the reshape and ink redraw path) and what the new changes made worse.
 
 ## 2. A text card's text drifts when the card is moved right after it is made, and Ctrl+Z misbehaves
