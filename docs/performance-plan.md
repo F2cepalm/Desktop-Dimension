@@ -40,6 +40,21 @@ The published app is compiled ahead of time (ReadyToRun). That makes the first f
 | 8.1 / 8.2 Files on spaces | **Done.** |
 | 8.3 Polish | **Mostly.** Done: the drop burst and fade-in, the Dreamy wobble, the file name at the top (double-click opens the file), Ctrl+click links. Left: "reload from file" and tables. |
 
+## Status (3 October 2026): no freezes, and light on a throttled laptop
+
+These changes are built but not yet measured on Windows. Run the perf project and `dotnet test` to check them.
+
+| Problem | Fix |
+|---|---|
+| Every change wrote `spaces.json` on the UI thread, with every earlier version of every moved, edited or erased item, so saves grew without end | Undo reaches 200 changes back per space; older versions and erased ink out of reach are let go, and undo stops at the oldest kept version. Saves wait for changes to stop (400 ms, at most 2 s). The JSON is made on the UI thread and written on one background thread. Exit waits for the disk (`Spaces/SaveQueue.cs`, `SpaceRecord.TrimHistory`). |
+| The frame clock woke the UI thread on every refresh (up to 360 Hz) even when idle | While only the ambient animation moves, the clock ticks at the ambient rate. A press, drag, wheel, overlay key, a moving app window or anything animating brings back every refresh at once (`Universe.Hurry`, `FrameClock.Pace`). |
+| Ambient animation cost was fixed at 60 fps whatever the CPU | 60 fps; 30 on battery saver; and 30, 20 or 15 whenever it would take over a quarter of the UI thread (`Universe.AmbientRateFor`). |
+| Spaces nobody can see still animated | Four times a second, spaces wholly covered by opaque windows of other apps rest. All rest while the session is locked or the displays are off (`Native/Occlusion.cs`, `Native/ScreenWatch.cs`). |
+| Dreamy drew one space after another on the UI thread | All Dreamy spaces draw a frame side by side on the thread pool. A raster of 64k art pixels or more fills its rows in bands, identical pixel for pixel (`Universe.DrawAhead`, `DreamRaster.FillRows`). |
+| A hand drag redrew all the ink every frame | The ink that stays put is painted once per drag and copied; only the dragged ink is drawn (`InkLayer.PaintStill`). |
+| Surfaces grew during the first frames of a reshape | Picking a space up with Ctrl+Alt+M makes room for 1.5× on each side at once; dropped, each surface shrinks back the next time it is drawn (`SpaceSurface.ReshapeRoom`). |
+| Dropped files and the text-wrap clipboard fallback could block on the disk, the network or another app | Files are read on another thread. The clipboard is used on a thread of its own. |
+
 ## Goal
 
 Every interactive action keeps up with the display, up to 360 Hz. The app can't show more frames than the display's refresh rate: the desktop compositor presents once per refresh. So "300 fps" means finishing each frame well within one refresh on a 300 Hz+ display.
