@@ -372,16 +372,36 @@ internal sealed class InkLayer : IDisposable
     private Matrix3x2 World() =>
         Matrix3x2.CreateTranslation((float)-_origin.X, (float)-_origin.Y) * Matrix3x2.CreateScale((float)_scale);
 
+    private double _room = 1;
+    private bool _trim;
+
+    /// <summary>
+    /// Room the bitmaps make beyond the layer's size: more than 1 while the space is picked up to be
+    /// reshaped (see <see cref="SpaceSurface.ReshapeRoom"/>). Back to 1, they shrink back at the next shape.
+    /// </summary>
+    public double ReshapeRoom
+    {
+        get => _room;
+        set
+        {
+            _trim |= value < _room;
+            _room = value;
+        }
+    }
+
     /// <summary>Makes sure the bitmaps hold the layer's size; they are only made anew when too small (or far too big).</summary>
     private void EnsureCapacity()
     {
-        bool fits = _ink is not null && _capacityWidth >= Width && _capacityHeight >= Height;
-        bool wasteful = (long)_capacityWidth * _capacityHeight > 4L * Math.Max(Step * Step, (long)Width * Height);
-        if (fits && !wasteful)
+        int wantedWidth = Headroom.Wanted(Width, _room), wantedHeight = Headroom.Wanted(Height, _room);
+        bool fits = _ink is not null && _capacityWidth >= wantedWidth && _capacityHeight >= wantedHeight;
+        bool wasteful = (long)_capacityWidth * _capacityHeight > 4L * Math.Max(Step * Step, (long)wantedWidth * wantedHeight);
+        bool oversized = _trim && (_capacityWidth > Headroom.Size(wantedWidth, 0) || _capacityHeight > Headroom.Size(wantedHeight, 0));
+        _trim = false;
+        if (fits && !wasteful && !oversized)
             return;
         int max = (int)Math.Min(16384, _gpu.D2DContext.MaximumBitmapSize);
-        _capacityWidth = Math.Min(max, Headroom.Size(Width, _capacityWidth));
-        _capacityHeight = Math.Min(max, Headroom.Size(Height, _capacityHeight));
+        _capacityWidth = Math.Min(max, oversized ? Headroom.Size(wantedWidth, 0) : Headroom.Size(wantedWidth, _capacityWidth));
+        _capacityHeight = Math.Min(max, oversized ? Headroom.Size(wantedHeight, 0) : Headroom.Size(wantedHeight, _capacityHeight));
         Width = Math.Min(Width, _capacityWidth);
         Height = Math.Min(Height, _capacityHeight);
         _ink?.Dispose();

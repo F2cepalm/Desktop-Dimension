@@ -653,11 +653,35 @@ internal sealed partial class SpaceWindow : IDisposable
             Settle();
     }
 
+    /// <summary>Room made for a reshape, on each side, while the space is picked up (see <see cref="SpaceSurface.ReshapeRoom"/>).</summary>
+    private const double ReshapeRoom = 1.5;
+
+    /// <summary>
+    /// Makes room, or lets it go, for reshaping the space: its surfaces, bitmaps and buffers are made half
+    /// as big again on each side now, on the press, rather than grown during the first frames of a drag.
+    /// </summary>
+    private void MakeReshapeRoom(bool room)
+    {
+        double factor = room ? ReshapeRoom : 1;
+        if (_surface.ReshapeRoom == factor)
+            return;
+        _surface.ReshapeRoom = factor;
+        _look.ReshapeRoom = factor;
+        if (_ink is not null)
+            _ink.ReshapeRoom = factor;
+        if (room)
+        {
+            Lay(_outline); // made with the room right away: the next frame draws into them
+            _needsPresent = true;
+        }
+    }
+
     /// <summary>Floats the space just under a topmost window (the one moving it), above every app.</summary>
     public void Lift(IntPtr under)
     {
         if (_disposed)
             return;
+        MakeReshapeRoom(true);
         _liftedUnder = under;
         const uint keep = Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE;
         Win32.SetWindowPos(_source.Handle, Win32.HWND_TOPMOST, 0, 0, 0, 0, keep);
@@ -669,6 +693,7 @@ internal sealed partial class SpaceWindow : IDisposable
     {
         if (_disposed || _liftedUnder == IntPtr.Zero)
             return;
+        MakeReshapeRoom(false); // each shrinks back the next time it is drawn
         _liftedUnder = IntPtr.Zero;
         Win32.SetWindowPos(_source.Handle, Win32.HWND_NOTOPMOST, 0, 0, 0, 0, Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE);
         Settle();

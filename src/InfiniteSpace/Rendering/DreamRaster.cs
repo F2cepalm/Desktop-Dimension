@@ -44,13 +44,15 @@ internal sealed class DreamRaster
     /// every frame): its buffers and outlines are taken over, and reused where big enough. It must not
     /// be used afterwards.
     /// </param>
-    public DreamRaster(Geometry outline, Rect world, DreamRaster? recycle = null)
+    /// <param name="room">Room the buffers make beyond this size, on each side (a space picked up to be reshaped).</param>
+    public DreamRaster(Geometry outline, Rect world, DreamRaster? recycle = null, double room = 1)
     {
         _world = world;
         Width = Math.Max(1, (int)Math.Round(world.Width / DreamStyle.ArtPixel));
         Height = Math.Max(1, (int)Math.Round(world.Height / DreamStyle.ArtPixel));
-        _pixels = Buffer(recycle?._pixels, Width * Height);
-        _next = Buffer(recycle?._next, Width * Height);
+        int wanted = (int)Math.Min(int.MaxValue / 2, (long)Headroom.Wanted(Width, room) * Headroom.Wanted(Height, room));
+        _pixels = Buffer(recycle?._pixels, Width * Height, wanted);
+        _next = Buffer(recycle?._next, Width * Height, wanted);
         if (recycle is not null)
             (_rowStart, _placed, _sorted, _bandActive, _bandCrossings) = (recycle._rowStart, recycle._placed, recycle._sorted, recycle._bandActive, recycle._bandCrossings);
 
@@ -92,13 +94,17 @@ internal sealed class DreamRaster
     /// <summary>The last rendered frame: premultiplied BGRA, row-major, <see cref="Width"/> per row (it may run on past the last row).</summary>
     public int[] Pixels => _pixels;
 
-    /// <summary>An old buffer, cleared, if it holds <paramref name="count"/> pixels; else a new one (with room to grow, when replacing a smaller one).</summary>
-    private static int[] Buffer(int[]? old, int count)
+    /// <summary>
+    /// An old buffer, cleared, if it holds <paramref name="wanted"/> pixels (at least <paramref name="count"/>);
+    /// else a new one (with room to grow, when replacing a smaller one).
+    /// </summary>
+    private static int[] Buffer(int[]? old, int count, int wanted)
     {
+        wanted = Math.Max(wanted, count);
         if (old is null)
-            return new int[count];
-        if (old.Length < count)
-            return new int[count + count / 2];
+            return new int[wanted];
+        if (old.Length < wanted)
+            return new int[Math.Max(wanted, count + count / 2)];
         Array.Clear(old, 0, count);
         return old;
     }

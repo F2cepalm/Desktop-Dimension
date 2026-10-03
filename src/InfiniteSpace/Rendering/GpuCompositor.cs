@@ -163,19 +163,21 @@ internal sealed class GpuCompositor : IDisposable
     /// with room to spare, when it isn't): for pictures painted again for every new shape. Everything
     /// past <paramref name="width"/> × <paramref name="height"/> is left transparent.
     /// </summary>
-    public void Repaint(ref ID2D1Bitmap1? bitmap, int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw)
+    /// <param name="room">Room to make beyond the size (see <see cref="Headroom.Wanted"/>).</param>
+    public void Repaint(ref ID2D1Bitmap1? bitmap, int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw, double room = 1)
     {
         width = Math.Max(1, width);
         height = Math.Max(1, height);
+        int wantedWidth = Headroom.Wanted(width, room), wantedHeight = Headroom.Wanted(height, room);
         float dpi = 96 * scale;
         var context = D2DContext;
         var size = bitmap?.PixelSize ?? default;
-        bool fits = bitmap is not null && size.Width >= width && size.Height >= height && bitmap.Dpi.Width == dpi;
-        bool wasteful = (long)size.Width * size.Height > 4L * Math.Max(256 * 256, (long)width * height);
+        bool fits = bitmap is not null && size.Width >= wantedWidth && size.Height >= wantedHeight && bitmap.Dpi.Width == dpi;
+        bool wasteful = (long)size.Width * size.Height > 4L * Math.Max(256 * 256, (long)wantedWidth * wantedHeight);
         if (!fits || wasteful)
         {
             bitmap?.Dispose();
-            bitmap = context.CreateBitmap(new SizeI(Headroom.Size(width, size.Width), Headroom.Size(height, size.Height)), IntPtr.Zero, 0,
+            bitmap = context.CreateBitmap(new SizeI(Headroom.Size(wantedWidth, size.Width), Headroom.Size(wantedHeight, size.Height)), IntPtr.Zero, 0,
                 new BitmapProperties1(Bgra, dpi, dpi, BitmapOptions.Target));
         }
         context.Target = bitmap;

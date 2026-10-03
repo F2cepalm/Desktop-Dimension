@@ -36,6 +36,12 @@ internal interface ISpaceLook : IDisposable
     /// </summary>
     bool RendersOnAnyThread => false;
 
+    /// <summary>
+    /// Room its own buffers make beyond the shape's size while the space is picked up to be reshaped (see
+    /// <see cref="SpaceSurface.ReshapeRoom"/>); a look without buffers of its own ignores it.
+    /// </summary>
+    double ReshapeRoom { get => 1; set { } }
+
     /// <summary>Hands the current frame to the compositor.</summary>
     void Present(ISpaceCanvas canvas);
 

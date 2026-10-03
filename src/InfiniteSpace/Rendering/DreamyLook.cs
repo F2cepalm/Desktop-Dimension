@@ -17,9 +17,11 @@ internal sealed class DreamyLook : ISpaceLook
     public void SetShape(Geometry outline, Rect world)
     {
         _world = world;
-        _raster = new DreamRaster(outline, world, recycle: _raster);
+        _raster = new DreamRaster(outline, world, recycle: _raster, ReshapeRoom);
         _renderedAt = double.NaN;
     }
+
+    public double ReshapeRoom { get; set; } = 1;
 
     public void Move(Geometry outline, Rect world)
     {

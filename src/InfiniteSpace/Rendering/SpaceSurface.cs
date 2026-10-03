@@ -136,7 +136,27 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
         _gpu.Paint(width, height, scale, draw);
 
     public void Repaint(ref ID2D1Bitmap1? bitmap, int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw) =>
-        _gpu.Repaint(ref bitmap, width, height, scale, draw);
+        _gpu.Repaint(ref bitmap, width, height, scale, draw, _room);
+
+    private double _room = 1;
+
+    /// <summary>
+    /// Room surfaces make beyond their size: more than 1 while the space is picked up to be reshaped, so
+    /// they are made big enough once, when it is picked up, instead of growing during its first frames.
+    /// Back to 1, each surface shrinks back to its size the next time it is drawn.
+    /// </summary>
+    public double ReshapeRoom
+    {
+        get => _room;
+        set
+        {
+            if (value == _room)
+                return;
+            _room = value;
+            foreach (var layer in new[] { _backdrop, _art, _frame, _ink })
+                layer.Room = value;
+        }
+    }
 
     /// <summary>Shows the ink; only <paramref name="dirty"/> (device pixels) is copied over, on the GPU.</summary>
     /// <remarks>A new size copies everything, whatever <paramref name="dirty"/> says.</remarks>
@@ -253,14 +273,31 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
 
         private (int Width, int Height) _size;
         private (int Width, int Height) _capacity;
+        private double _room = 1;
+        private bool _trim;
+
+        /// <summary>Room to make beyond the size (see <see cref="SpaceSurface.ReshapeRoom"/>); less than before shrinks it next time.</summary>
+        public double Room
+        {
+            get => _room;
+            set
+            {
+                _trim |= value < _room;
+                _room = value;
+            }
+        }
 
         /// <summary>Makes sure there is a surface this big, showing only this much of it.</summary>
         /// <returns>Whether it is new (and must be drawn whole).</returns>
         public bool Ensure(GpuCompositor gpu, int width, int height)
         {
-            bool fits = Surface is not null && width <= _capacity.Width && height <= _capacity.Height;
-            bool wasteful = (long)_capacity.Width * _capacity.Height > 4L * Math.Max(Step * Step, (long)width * height);
-            if (fits && !wasteful)
+            int wantedWidth = Headroom.Wanted(width, _room), wantedHeight = Headroom.Wanted(height, _room);
+            bool fits = Surface is not null && wantedWidth <= _capacity.Width && wantedHeight <= _capacity.Height;
+            bool wasteful = (long)_capacity.Width * _capacity.Height > 4L * Math.Max(Step * Step, (long)wantedWidth * wantedHeight);
+            // Room made for a reshape that is over: back to the size, once.
+            bool oversized = _trim && (_capacity.Width > Headroom.Size(wantedWidth, 0) || _capacity.Height > Headroom.Size(wantedHeight, 0));
+            _trim = false;
+            if (fits && !wasteful && !oversized)
             {
                 if (_size != (width, height))
                 {
@@ -271,7 +308,9 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
                 return false;
             }
             Surface?.Dispose();
-            _capacity = (Headroom.Size(width, _capacity.Width), Headroom.Size(height, _capacity.Height));
+            _capacity = oversized
+                ? (Headroom.Size(wantedWidth, 0), Headroom.Size(wantedHeight, 0))
+                : (Headroom.Size(wantedWidth, _capacity.Width), Headroom.Size(wantedHeight, _capacity.Height));
             gpu.Composition.CreateSurface((uint)_capacity.Width, (uint)_capacity.Height, Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied, out var surface).CheckError();
             Surface = surface; // its first drawing takes all of it, as a new surface's must
             Visual.SetContent(surface);

@@ -17,5 +17,11 @@ internal static class Headroom
     public static int Size(int needed, int had) =>
         RoundUp(had > 0 && needed > had ? Math.Max(needed, had + had / 2) : needed);
 
+    /// <summary>
+    /// How much of a side to make room for: all of it, and as much again as <paramref name="room"/> asks
+    /// beyond 1 (a space picked up to be reshaped makes room at once, so its first frames don't grow it).
+    /// </summary>
+    public static int Wanted(int side, double room) => room <= 1 ? side : (int)Math.Min(int.MaxValue / 2, Math.Ceiling(side * room));
+
     private static int RoundUp(int pixels) => Math.Max(Step, (pixels + Step - 1) / Step * Step);
 }
