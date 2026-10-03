@@ -114,8 +114,12 @@ internal static class TextSelection
     /// <summary>
     /// For apps without UI Automation text: copies the selection (Ctrl+C) and reads it, putting what was on
     /// the clipboard back afterwards. The keys the user holds are let go of first, so the copy can't become
-    /// another shortcut (Ctrl+W would close a tab). Must run on the UI thread (the clipboard needs it).
+    /// another shortcut (Ctrl+W would close a tab).
     /// </summary>
+    /// <remarks>
+    /// The clipboard is worked on a thread of its own: copying what is on it (a big picture) or waiting on
+    /// an app that renders its data late (or hangs) would otherwise hold up every frame meanwhile.
+    /// </remarks>
     /// <returns>null when nothing was copied.</returns>
     public static async Task<string?> CopyAsync()
     {
@@ -125,12 +129,38 @@ internal static class TextSelection
                 return null; // keys held for over 1.5 s: better not to copy at all
             await Task.Delay(15);
         }
+        return await OnClipboardThread(Copy);
+    }
 
+    /// <summary>Runs clipboard work on a thread of its own (the clipboard needs a single-threaded apartment).</summary>
+    private static Task<T> OnClipboardThread<T>(Func<T> work)
+    {
+        var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                done.SetResult(work());
+            }
+            catch (Exception ex)
+            {
+                done.SetException(ex);
+            }
+        })
+        { IsBackground = true, Name = "Infinite Space clipboard" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return done.Task;
+    }
+
+    /// <summary>The copy itself (see <see cref="CopyAsync"/>), on the clipboard's thread.</summary>
+    private static string? Copy()
+    {
         var saved = SaveClipboard();
         uint before = GetClipboardSequenceNumber();
         Press(VK_CONTROL, VK_C);
         for (int i = 0; i < 25 && GetClipboardSequenceNumber() == before; i++)
-            await Task.Delay(20);
+            Thread.Sleep(20);
         string? text = null;
         if (GetClipboardSequenceNumber() != before)
         {
