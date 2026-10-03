@@ -51,24 +51,62 @@ internal sealed class SpaceStore(string dataDirectory, ILogger<SpaceStore> logge
         return records;
     }
 
-    public void Save(IEnumerable<SpaceRecord> spaces)
+    /// <summary>Saves the spaces now, on this thread (see <see cref="Prepare"/> for saving without waiting on the disk).</summary>
+    public void Save(IEnumerable<SpaceRecord> spaces) => Prepare(spaces).Write();
+
+    /// <summary>
+    /// Everything a save needs from the spaces, taken now on the thread that owns them: their JSON, and
+    /// the text of every opened file (new ones get a name of their own). The returned save only touches
+    /// the disk, so it can be written on any thread while the spaces change on.
+    /// </summary>
+    public PendingSave Prepare(IEnumerable<SpaceRecord> spaces)
     {
-        Directory.CreateDirectory(DataDirectory);
         var records = spaces.ToList();
-        var kept = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var texts = new List<(string Stored, string Text)>();
         foreach (var note in FileNotes(records))
         {
             var file = note.File!;
-            if (file.Stored is null || !File.Exists(Path.Combine(DataDirectory, file.Stored)))
-                file.Stored = WriteStored(note.Text, file);
-            kept.Add(Path.GetFileName(file.Stored));
+            file.Stored ??= NewStoredName(file);
+            texts.Add((file.Stored, note.Text));
+        }
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(new SpacesDocument { Spaces = records }, JsonOptions);
+        return new PendingSave(this, json, texts);
+    }
+
+    /// <summary>A save taken by <see cref="Prepare"/>: the spaces' JSON and opened files' texts, ready for the disk.</summary>
+    public sealed class PendingSave
+    {
+        private readonly SpaceStore _store;
+        private readonly byte[] _json;
+        private readonly List<(string Stored, string Text)> _texts;
+
+        internal PendingSave(SpaceStore store, byte[] json, List<(string Stored, string Text)> texts)
+        {
+            _store = store;
+            _json = json;
+            _texts = texts;
         }
 
-        string temp = FilePath + ".tmp";
-        using (var stream = File.Create(temp))
-            JsonSerializer.Serialize(stream, new SpacesDocument { Spaces = records }, JsonOptions);
-        File.Move(temp, FilePath, overwrite: true);
-        RemoveUnused(kept);
+        /// <summary>
+        /// Writes it, whole or not at all: opened files' texts that aren't on disk yet first, then spaces.json
+        /// (written aside and moved into place), then stored texts no note needs any more go.
+        /// </summary>
+        public void Write()
+        {
+            Directory.CreateDirectory(_store.DataDirectory);
+            var kept = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (stored, text) in _texts)
+            {
+                if (!File.Exists(Path.Combine(_store.DataDirectory, stored)))
+                    _store.WriteStored(stored, text);
+                kept.Add(Path.GetFileName(stored));
+            }
+
+            string temp = _store.FilePath + ".tmp";
+            File.WriteAllBytes(temp, _json);
+            File.Move(temp, _store.FilePath, overwrite: true);
+            _store.RemoveUnused(kept);
+        }
     }
 
     /// <summary>Every note opened from a file, with every earlier version of it (for undo).</summary>
@@ -87,17 +125,17 @@ internal sealed class SpaceStore(string dataDirectory, ILogger<SpaceStore> logge
         }
     }
 
-    /// <summary>Writes an opened file's text once, under a name of its own, whole or not at all.</summary>
-    /// <returns>Where it went, relative to the data folder.</returns>
-    private string WriteStored(string text, NoteFile file)
+    /// <summary>A name of its own for an opened file's text, relative to the data folder.</summary>
+    private static string NewStoredName(NoteFile file) =>
+        Path.Combine(NotesFolder, $"{Guid.NewGuid():N}{(file.Markdown ? ".md" : ".txt")}");
+
+    /// <summary>Writes an opened file's text under its stored name, whole or not at all.</summary>
+    private void WriteStored(string stored, string text)
     {
-        string folder = Path.Combine(DataDirectory, NotesFolder);
-        Directory.CreateDirectory(folder);
-        string name = $"{Guid.NewGuid():N}{(file.Markdown ? ".md" : ".txt")}";
-        string path = Path.Combine(folder, name);
+        string path = Path.Combine(DataDirectory, stored);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path + ".tmp", text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         File.Move(path + ".tmp", path, overwrite: true);
-        return Path.Combine(NotesFolder, name);
     }
 
     private string ReadStored(NoteFile file)

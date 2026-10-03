@@ -158,6 +158,76 @@ internal sealed class SpaceRecord
         Strokes.Add(moved);
     }
 
+    /// <summary>How many changes back undo goes on a space: older versions, and ink erased before them, are let go.</summary>
+    public const int UndoSteps = 200;
+
+    /// <summary>
+    /// Lets go of what undo can't reach within <paramref name="steps"/> changes: versions further back,
+    /// and erased ink with nothing left to bring back. Saving and memory then stay bounded however long
+    /// a space is worked on, instead of growing with every move and every erasure.
+    /// </summary>
+    /// <returns>Whether anything was let go.</returns>
+    public bool TrimHistory(int steps = UndoSteps)
+    {
+        // Undo takes back, change by change, every item whose current version has the newest order (see
+        // TakeNewestBatch). Follow it for that many changes without changing anything: what each item is
+        // then back to is the oldest version undo can reach, and whatever came before it can go.
+        int count = Strokes.Count + Notes.Count;
+        var reached = new IInk?[count];
+        var newest = new PriorityQueue<int, long>(count, Comparer<long>.Create((a, b) => b.CompareTo(a)));
+        for (int i = 0; i < count; i++)
+        {
+            reached[i] = i < Strokes.Count ? Strokes[i] : Notes[i - Strokes.Count];
+            if (!reached[i]!.UndoStop)
+                newest.Enqueue(i, reached[i]!.Order);
+        }
+        for (int step = 0; step < steps; step++)
+        {
+            if (!newest.TryPeek(out _, out long order))
+                return false; // undo can take back everything there is
+            if (order == 0)
+                return false; // ink from before ordering goes one item at a time, in list order: kept whole
+            while (newest.TryPeek(out int item, out long next) && next == order)
+            {
+                newest.Dequeue();
+                reached[item] = PreviousOf(reached[item]!);
+                if (reached[item] is { UndoStop: false } earlier)
+                    newest.Enqueue(item, earlier.Order);
+            }
+        }
+
+        // What each item is back to after that many changes is as far as undo goes from now on.
+        bool trimmed = false;
+        foreach (var oldest in reached)
+        {
+            if (oldest is null)
+                continue; // undo takes the item away within reach: nothing before it to let go
+            switch (oldest)
+            {
+                case InkStroke { Previous: not null } stroke:
+                    stroke.Previous = null;
+                    trimmed = true;
+                    break;
+                case TextNote { Previous: not null } note:
+                    note.Previous = null;
+                    trimmed = true;
+                    break;
+            }
+            oldest.UndoStop = true;
+        }
+        // Erased ink with no earlier version left is nothing: neither shown nor brought back by undo.
+        trimmed |= Strokes.RemoveAll(s => s.Previous is null && s.Points.Length == 0) > 0;
+        trimmed |= Notes.RemoveAll(n => n.Previous is null && n.Text.Length == 0 && n.File is null) > 0;
+        return trimmed;
+    }
+
+    private static IInk? PreviousOf(IInk ink) => ink switch
+    {
+        InkStroke stroke => stroke.Previous,
+        TextNote note => note.Previous,
+        _ => null,
+    };
+
     /// <summary>
     /// Takes back the newest change: every stroke and note that shares the newest order (a move of
     /// several things is one change). Ink from before ordering existed (order 0) goes one at a time.
@@ -177,19 +247,25 @@ internal sealed class SpaceRecord
     {
         long newest = -1;
         foreach (var stroke in Strokes)
-            newest = Math.Max(newest, stroke.Order);
+        {
+            if (!stroke.UndoStop)
+                newest = Math.Max(newest, stroke.Order);
+        }
         foreach (var note in Notes)
-            newest = Math.Max(newest, note.Order);
+        {
+            if (!note.UndoStop)
+                newest = Math.Max(newest, note.Order);
+        }
         return newest;
     }
 
-    /// <summary>Newest by <see cref="IInk.Order"/>; on a tie (ink saved before ordering) the later one.</summary>
+    /// <summary>Newest by <see cref="IInk.Order"/>; on a tie (ink saved before ordering) the later one. Undo stops are passed over.</summary>
     private static int IndexOfNewest<T>(List<T> items) where T : IInk
     {
         int newest = -1;
         for (int i = 0; i < items.Count; i++)
         {
-            if (newest < 0 || items[i].Order >= items[newest].Order)
+            if (!items[i].UndoStop && (newest < 0 || items[i].Order >= items[newest].Order))
                 newest = i;
         }
         return newest;
@@ -201,6 +277,9 @@ internal interface IInk
 {
     /// <summary>When it was added (see <see cref="InkOrder"/>); 0 for ink saved before ordering existed.</summary>
     long Order { get; set; }
+
+    /// <summary>Undo stops here: what came before was let go (see <see cref="SpaceRecord.TrimHistory"/>).</summary>
+    bool UndoStop { get; set; }
 
     /// <summary>Items with the same group are selected and moved together (Ctrl+G); null for none.</summary>
     Guid? Group { get; set; }
@@ -225,6 +304,10 @@ internal sealed class InkStroke : IInk
     /// <summary>The stroke as it was before it was moved into this one; undo brings it back.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public InkStroke? Previous { get; set; }
+
+    /// <summary>Undo stops here: what came before was let go (see <see cref="SpaceRecord.TrimHistory"/>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UndoStop { get; set; }
 
     public const double DefaultThickness = 3;
 
@@ -365,6 +448,10 @@ internal sealed class TextNote : IInk
 
     /// <summary>The note as it was before it was edited into this one; undo brings it back.</summary>
     public TextNote? Previous { get; set; }
+
+    /// <summary>Undo stops here: what came before was let go (see <see cref="SpaceRecord.TrimHistory"/>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UndoStop { get; set; }
 
     /// <summary>
     /// For a note opened from a file (a .txt or .md): which, and how it is shown. Its text is a snapshot

@@ -31,6 +31,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     private readonly List<SpaceRecord> _kept = [];
     private readonly Dictionary<IntPtr, Guid> _windowIds = [];
     private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
+    private SaveQueue? _saves;
     private DispatcherTimer? _settle;
     private DispatcherTimer? _lookout;
     private DispatcherTimer? _lookSoon;
@@ -259,6 +260,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         _lookout?.Stop();
         _lookSoon?.Stop();
         Persist(); // titles and the like picked up since the last change
+        FlushSaves(); // on the disk before the app goes
         foreach (var space in _spaces)
             CloseWindow(space);
         _spaces.Clear();
@@ -1103,17 +1105,15 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         space.Window.Dispose();
     }
 
-    private void Persist()
-    {
-        try
-        {
-            store.Save(_spaces.Where(s => !s.IsSheet || s.Record.Strokes.Count > 0 || s.Record.Notes.Count > 0).Select(s => s.Record).Concat(_kept)); // screen notes with nothing on them aren't kept
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            logger.LogError(ex, "Could not save spaces to {File}", store.FilePath);
-        }
-    }
+    /// <summary>Something changed: saved a moment later, off the UI thread (see <see cref="SaveQueue"/>).</summary>
+    private void Persist() => (_saves ??= new SaveQueue(store, logger, _dispatcher, SavedRecords)).Request();
+
+    /// <summary>Saves what is waiting and waits for the disk (on exit, and for checks that read the file).</summary>
+    internal void FlushSaves() => _saves?.Flush();
+
+    /// <summary>What is saved: every space, and kept ones, but screen notes only with something on them.</summary>
+    private IEnumerable<SpaceRecord> SavedRecords() =>
+        _spaces.Where(s => !s.IsSheet || s.Record.Strokes.Count > 0 || s.Record.Notes.Count > 0).Select(s => s.Record).Concat(_kept);
 
     internal sealed record SpacePart(SpaceRecord Record, PathGeometry Outline);
 

@@ -86,6 +86,7 @@ internal static class FileScenarios
         }
         Ui.Pump(300);
 
+        bench.Spaces.FlushSaves(); // saving waits for changes to stop, and writes in the background
         var saved = bench.Store.Load().Single();
         Console.WriteLine($"  {(saved.Notes.Count == 2 && saved.Notes.All(n => n.File is not null) ? "ok  " : "FAIL")} both files opened and saved ({saved.Notes.Count} notes)");
         Console.WriteLine($"  {(saved.Notes.All(n => n.Text.Length > 100) ? "ok  " : "FAIL")} their text came back from the notes folder");
@@ -201,6 +202,7 @@ internal static class FileScenarios
         bench.Spaces.Undo(window.Handle); // the text's move
         Check(record.Strokes.Count == 0 && record.Notes.Single(n => n.File is null) == text.Previous, "undo puts the text back where it was");
         Ui.Pump(300);
+        bench.Spaces.FlushSaves(); // saving waits for changes to stop, and writes in the background
         var saved = bench.Store.Load().Single();
         Check(saved.Notes.Count == 2 && saved.Notes.Single(n => n.File is not null).Text.Length > 100, "both notes saved, the file's text with it");
         Directory.Delete(folder, recursive: true);
