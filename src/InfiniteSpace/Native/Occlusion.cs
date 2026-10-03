@@ -58,8 +58,11 @@ internal static class Occlusion
         bounds = default;
         if (!Win32.IsWindowVisible(hwnd) || Win32.IsIconic(hwnd))
             return false;
-        if ((Win32.GetWindowLong(hwnd, Win32.GWL_EXSTYLE) & (Win32.WS_EX_LAYERED | Win32.WS_EX_TRANSPARENT)) != 0)
+        long style = Win32.GetWindowLong(hwnd, Win32.GWL_EXSTYLE);
+        if ((style & (Win32.WS_EX_LAYERED | Win32.WS_EX_TRANSPARENT)) != 0)
             return false; // may be see-through
+        if ((style & Win32.WS_EX_TOPMOST) != 0 && (style & Win32.WS_EX_NOREDIRECTIONBITMAP) != 0)
+            return false; // an overlay drawn only by DirectComposition, as this app's are: likely see-through
         if (Foreground.IsOwn(hwnd) || AppWindows.IsCloaked(hwnd) || AppWindows.IsShell(hwnd))
             return false;
         if (Win32.DwmGetWindowAttribute(hwnd, Win32.DWMWA_EXTENDED_FRAME_BOUNDS, out bounds, System.Runtime.InteropServices.Marshal.SizeOf<Win32.RECT>()) != 0 &&
