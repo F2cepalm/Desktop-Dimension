@@ -286,6 +286,8 @@ internal abstract class GpuOverlay : IFramePart
     {
         if (_closed)
             return IntPtr.Zero;
+        if (msg is Win32.WM_MOUSEMOVE or Win32.WM_LBUTTONDOWN or WM_MOUSEWHEEL or WM_KEYDOWN or WM_SYSKEYDOWN)
+            Universe.Hurry(); // what the user does shows on the very next refresh, not the next ambient frame
         switch (msg)
         {
             case Win32.WM_SETCURSOR when (lParam.ToInt64() & 0xFFFF) == HTCLIENT:

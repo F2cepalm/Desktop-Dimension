@@ -676,11 +676,18 @@ internal sealed partial class SpaceWindow : IDisposable
     /// Keeps up with the app window (z-order, visibility, moves and resizes); cheap, so it runs on
     /// every display refresh, whether or not a frame is drawn.
     /// </summary>
-    public void Track()
+    /// <returns>Whether its app window moved or changed size since the last look.</returns>
+    public bool Track()
     {
-        if (!_disposed)
-            _following = FollowHost();
+        if (_disposed)
+            return false;
+        var frame = _hostFrame;
+        _following = FollowHost();
+        return _hostFrame != frame;
     }
+
+    /// <summary>What draws it (set by <see cref="Universe.Attach(SpaceWindow)"/>): told when the user starts doing something.</summary>
+    internal Universe? Universe { get; set; }
 
     /// <summary>Draws the next animation frame, if it looks different (and the space is showing).</summary>
     public void RenderFrame(FrameState frame)
@@ -1044,6 +1051,7 @@ internal sealed partial class SpaceWindow : IDisposable
             case Win32.WM_LBUTTONDOWN:
             case WM_LBUTTONDBLCLK:
             {
+                Universe?.Hurry(); // what the press starts shows on the very next refresh
                 var at = ToScreen(lParam);
                 handled = true;
                 if (msg == WM_LBUTTONDBLCLK && DoubleClick(at))
@@ -1077,6 +1085,7 @@ internal sealed partial class SpaceWindow : IDisposable
                 handled = true;
                 if (_gesture == Gesture.None)
                     break;
+                Universe?.Hurry();
                 var at = ToScreen(lParam);
                 if (_gesture is Gesture.Pressed or Gesture.Painting)
                     Drag(at);
@@ -1115,6 +1124,7 @@ internal sealed partial class SpaceWindow : IDisposable
             }
 
             case WM_MOUSEWHEEL:
+                Universe?.Hurry(); // a file glides to where it was scrolled
                 Wheel?.Invoke(this, ScreenAt(lParam), (short)((wParam.ToInt64() >> 16) & 0xFFFF));
                 handled = true;
                 break;

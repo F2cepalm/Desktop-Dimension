@@ -34,6 +34,8 @@ internal sealed class FrameClock : IDisposable
     private readonly ManualResetEventSlim _running = new(false);
     private readonly Thread _thread;
     private readonly Stopwatch _sinceTick = new();
+    private readonly Stopwatch _sincePost = new();
+    private long _pace; // TimeSpan ticks (see Pace)
     private volatile bool _disposed;
     private int _queued;
     private int _tooFast;
@@ -58,6 +60,16 @@ internal sealed class FrameClock : IDisposable
     /// <summary>Whether the compositor clock is used where there is one (tests turn it off to try the Windows 10 way).</summary>
     internal static bool PreferCompositorClock { get; set; } = true;
 
+    /// <summary>
+    /// The least time from one tick to the next: zero ticks on every refresh; more lets the refreshes in
+    /// between go by without waking the UI thread, while nothing but the ambient animation moves.
+    /// </summary>
+    public TimeSpan Pace
+    {
+        get => TimeSpan.FromTicks(Volatile.Read(ref _pace));
+        set => Volatile.Write(ref _pace, value.Ticks);
+    }
+
     public void Start() => _running.Set();
 
     public void Stop() => _running.Reset();
@@ -80,6 +92,12 @@ internal sealed class FrameClock : IDisposable
             if (_tooFast >= TooFastInARow && elapsed < TimeSpan.FromMilliseconds(16))
                 Thread.Sleep(TimeSpan.FromMilliseconds(16) - elapsed);
             _sinceTick.Restart();
+
+            // Idle: this refresh goes by unless the pace is up (ticks stay on refreshes all the same).
+            long pace = Volatile.Read(ref _pace);
+            if (pace > 0 && _sincePost.IsRunning && _sincePost.Elapsed.Ticks < pace)
+                continue;
+            _sincePost.Restart();
 
             if (Interlocked.Exchange(ref _queued, 1) == 0)
             {

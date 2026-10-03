@@ -50,8 +50,17 @@ internal sealed class Universe : IDisposable
     /// <summary>How long a replaced window stays up, so its replacement is on screen before it goes.</summary>
     private const int RetireAfterFrames = 3;
 
-    /// <summary>Frames per second for the ambient animation, whatever else is moving.</summary>
-    private const double AmbientRate = 60;
+    /// <summary>Frames per second for the ambient animation, at most (see <see cref="AmbientRate"/>).</summary>
+    private const double FullAmbientRate = 60;
+
+    /// <summary>The ambient rates there are: whole fractions of 60, so the animation stays even.</summary>
+    private static readonly double[] AmbientRates = [60, 30, 20, 15];
+
+    /// <summary>The share of the UI thread the ambient animation may take; the rest stays free for the user.</summary>
+    private const double AmbientShare = 0.25;
+
+    /// <summary>How long the full refresh rate holds after the last thing the user moved, or an app window moved.</summary>
+    private const double HotHold = 0.3;
 
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly List<SpaceWindow> _spaces = [];
@@ -64,6 +73,10 @@ internal sealed class Universe : IDisposable
     private Vector _look;
     private bool _hasLook;
     private bool _disposed;
+    private double _hotUntil = double.NegativeInfinity;
+    private double _ambientCost = double.NaN; // ms per ambient frame, smoothed
+    private double _nextPowerCheck = double.NegativeInfinity;
+    private bool _batterySaver;
 
     public Universe(GpuCompositor gpu)
     {
@@ -82,12 +95,30 @@ internal sealed class Universe : IDisposable
     /// <summary>What paces the frames (diagnostics; see <see cref="FrameClock"/>).</summary>
     internal string ClockSource => _frames.Source;
 
+    /// <summary>
+    /// Frames per second for the ambient animation now: 60, halved while Windows' battery saver is on, and
+    /// lowered further whenever drawing it would take more than a quarter of the UI thread (a slow or
+    /// throttled CPU, many large spaces), so what the user does always keeps the display's full rate.
+    /// </summary>
+    internal double AmbientRate { get; private set; } = FullAmbientRate;
+
+    /// <summary>
+    /// The user is doing something (a press, a drag, the wheel, a key in an overlay): ticks go back to
+    /// every refresh at once, rather than at the next ambient frame.
+    /// </summary>
+    public void Hurry()
+    {
+        _hotUntil = _clock.Elapsed.TotalSeconds + HotHold;
+        _frames.Pace = TimeSpan.Zero;
+    }
+
     /// <summary>Starts animating a space; its first frame is shown right away.</summary>
     public void Attach(SpaceWindow space)
     {
         if (_spaces.Contains(space))
             return;
         _spaces.Add(space);
+        space.Universe = this;
         space.Track();
         space.RenderFrame(new FrameState(_clock.Elapsed.TotalSeconds, _look));
         Gpu.Commit();
@@ -179,13 +210,19 @@ internal sealed class Universe : IDisposable
         UpdateLook(dt);
         RetireDue();
 
-        // Every refresh: spaces keep up with their apps (moved windows move along). Cheap, no drawing.
+        // Every tick: spaces keep up with their apps (moved windows move along). Cheap, no drawing.
+        bool hostsMoved = false;
         for (int i = 0; i < _spaces.Count; i++)
-            _spaces[i].Track();
+            hostsMoved |= _spaces[i].Track();
+        if (hostsMoved)
+            _hotUntil = now + HotHold; // an app window is being dragged: follow it on every refresh
 
         // Full refresh rate while the user moves something (a dragged block, paint, a click burst),
         // for that alone; the ambient animation (and the cursor's parallax) moves on at its own rate.
         bool interactive = AnyWantsEveryFrame();
+        if (interactive)
+            _hotUntil = now + HotHold;
+        CheckPower(now);
         // A quarter early still counts, so refresh jitter never drops an ambient frame (60 Hz displays
         // render every refresh, 120 Hz every other one).
         bool ambientDue = now - _lastFrame >= 0.75 / AmbientRate;
@@ -207,8 +244,55 @@ internal sealed class Universe : IDisposable
 
         Gpu.Commit();
         StopWhenIdle();
+        double cost = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         if (drawn)
-            FrameEvents.Log.Record(Stopwatch.GetElapsedTime(started).TotalMilliseconds, _spaces.Count, interactive);
+            FrameEvents.Log.Record(cost, _spaces.Count, interactive);
+        if (drawn && ambientDue)
+            Govern(cost);
+        // Nothing moving but the ambient animation: the refreshes in between needn't wake this thread.
+        _frames.Pace = now < _hotUntil ? TimeSpan.Zero : TimeSpan.FromSeconds(0.75 / AmbientRate);
+    }
+
+    /// <summary>Whether Windows' battery saver is on, looked up every few seconds.</summary>
+    private void CheckPower(double now)
+    {
+        if (now < _nextPowerCheck)
+            return;
+        _nextPowerCheck = now + 5;
+        bool saver = Win32.GetSystemPowerStatus(out var status) && status.SystemStatusFlag == 1;
+        if (saver == _batterySaver)
+            return;
+        _batterySaver = saver;
+        AmbientRate = AmbientRateFor(_ambientCost, saver, AmbientRate);
+    }
+
+    /// <summary>Follows what an ambient frame costs, and sets the ambient rate by it (see <see cref="AmbientRate"/>).</summary>
+    private void Govern(double cost)
+    {
+        _ambientCost = double.IsNaN(_ambientCost) ? cost : _ambientCost + (cost - _ambientCost) * 0.05;
+        AmbientRate = AmbientRateFor(_ambientCost, _batterySaver, AmbientRate);
+    }
+
+    /// <summary>
+    /// The ambient rate for frames that cost <paramref name="cost"/> ms: the fastest that keeps the
+    /// animation within <see cref="AmbientShare"/> of the UI thread (30 at most on battery saver, 15 at
+    /// least). It only goes back up once it would fit with a margin, so it never flickers between two.
+    /// </summary>
+    internal static double AmbientRateFor(double cost, bool batterySaver, double current)
+    {
+        double ceiling = batterySaver ? FullAmbientRate / 2 : FullAmbientRate;
+        if (double.IsNaN(cost) || cost <= 0)
+            return Math.Min(current, ceiling);
+        double affordable = AmbientShare * 1000 / cost;
+        foreach (double rate in AmbientRates)
+        {
+            if (rate > ceiling)
+                continue;
+            // Down as soon as it doesn't fit; up only with a quarter to spare.
+            if (rate <= current ? rate <= affordable : rate * 1.25 <= affordable)
+                return rate;
+        }
+        return AmbientRates[^1];
     }
 
     private bool AnyWantsEveryFrame()
