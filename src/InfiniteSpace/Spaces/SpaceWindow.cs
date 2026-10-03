@@ -689,6 +689,9 @@ internal sealed partial class SpaceWindow : IDisposable
     /// <summary>What draws it (set by <see cref="Universe.Attach(SpaceWindow)"/>): told when the user starts doing something.</summary>
     internal Universe? Universe { get; set; }
 
+    /// <summary>Nobody can see it (covered by other windows, the session locked, the displays off): its ambient animation rests.</summary>
+    internal bool Unseen { get; set; }
+
     /// <summary>Draws the next animation frame, if it looks different (and the space is showing).</summary>
     public void RenderFrame(FrameState frame)
     {
@@ -719,7 +722,7 @@ internal sealed partial class SpaceWindow : IDisposable
             RedrawInk(present: false);
         // The scenery moves on with the ambient animation (and faster only while a click splashes);
         // frames in between only show what the user is doing, such as paint.
-        if ((frame.AmbientDue || _look.HasBursts || !_shown) && _look.Render(frame))
+        if (((frame.AmbientDue && !Unseen) || _look.HasBursts || !_shown) && _look.Render(frame))
             _lookDirty = true;
         if (_lookDirty || _needsPresent || !_shown)
             Present();

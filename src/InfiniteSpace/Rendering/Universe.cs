@@ -62,6 +62,9 @@ internal sealed class Universe : IDisposable
     /// <summary>How long the full refresh rate holds after the last thing the user moved, or an app window moved.</summary>
     private const double HotHold = 0.3;
 
+    /// <summary>How often it looks again at which spaces can be seen (see <see cref="CheckSight"/>).</summary>
+    private const double SightInterval = 0.25;
+
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly List<SpaceWindow> _spaces = [];
     private readonly List<(SpaceWindow Window, int FramesLeft)> _retiring = [];
@@ -77,11 +80,15 @@ internal sealed class Universe : IDisposable
     private double _ambientCost = double.NaN; // ms per ambient frame, smoothed
     private double _nextPowerCheck = double.NegativeInfinity;
     private bool _batterySaver;
+    private double _nextSightCheck = double.NegativeInfinity;
+    private bool _nothingSeen;
+    private readonly ScreenWatch _screen;
 
     public Universe(GpuCompositor gpu)
     {
         Gpu = gpu;
         _frames = new FrameClock(Dispatcher.CurrentDispatcher, Tick);
+        _screen = new ScreenWatch();
     }
 
     public GpuCompositor Gpu { get; }
@@ -119,6 +126,7 @@ internal sealed class Universe : IDisposable
             return;
         _spaces.Add(space);
         space.Universe = this;
+        _nothingSeen = false; // a new space is in sight until a look says otherwise
         space.Track();
         space.RenderFrame(new FrameState(_clock.Elapsed.TotalSeconds, _look));
         Gpu.Commit();
@@ -223,6 +231,11 @@ internal sealed class Universe : IDisposable
         if (interactive)
             _hotUntil = now + HotHold;
         CheckPower(now);
+        if (now >= _nextSightCheck)
+        {
+            _nextSightCheck = now + SightInterval;
+            CheckSight();
+        }
         // A quarter early still counts, so refresh jitter never drops an ambient frame (60 Hz displays
         // render every refresh, 120 Hz every other one).
         bool ambientDue = now - _lastFrame >= 0.75 / AmbientRate;
@@ -249,8 +262,35 @@ internal sealed class Universe : IDisposable
             FrameEvents.Log.Record(cost, _spaces.Count, interactive);
         if (drawn && ambientDue)
             Govern(cost);
-        // Nothing moving but the ambient animation: the refreshes in between needn't wake this thread.
-        _frames.Pace = now < _hotUntil ? TimeSpan.Zero : TimeSpan.FromSeconds(0.75 / AmbientRate);
+        // Nothing moving but the ambient animation: the refreshes in between needn't wake this thread;
+        // and nothing at all while no space can be seen, but a look now and then.
+        _frames.Pace = now < _hotUntil ? TimeSpan.Zero : TimeSpan.FromSeconds(_nothingSeen ? SightInterval : 0.75 / AmbientRate);
+    }
+
+    /// <summary>
+    /// Which spaces can be seen: none while the session is locked or the displays are off, and none that
+    /// other apps' windows cover entirely (a maximised app over the desktop, a full-screen game). Those
+    /// skip the ambient animation; they pick it up where it has got to once they show again.
+    /// </summary>
+    private void CheckSight()
+    {
+        bool dark = _screen.Dark;
+        var showing = new List<IntPtr>(_spaces.Count);
+        foreach (var space in _spaces)
+        {
+            if (space.IsShowing)
+                showing.Add(space.Handle);
+        }
+        var covered = dark ? null : Occlusion.Covered(showing);
+        int next = 0;
+        bool anySeen = false;
+        foreach (var space in _spaces)
+        {
+            bool unseen = space.IsShowing ? dark || covered![next++] : dark;
+            space.Unseen = unseen;
+            anySeen |= space.IsShowing && !unseen;
+        }
+        _nothingSeen = !anySeen && _parts.Count == 0;
     }
 
     /// <summary>Whether Windows' battery saver is on, looked up every few seconds.</summary>
@@ -358,6 +398,7 @@ internal sealed class Universe : IDisposable
             return;
         _disposed = true;
         _frames.Dispose();
+        _screen.Dispose();
         foreach (var (window, _) in _retiring)
             window.Dispose();
         _retiring.Clear();

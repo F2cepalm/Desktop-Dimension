@@ -443,6 +443,45 @@ internal static class Win32
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
 
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT value, int size);
+
+    /// <summary>A window's bounds without the invisible resize borders and the shadow.</summary>
+    public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+    public const int RGN_DIFF = 4;
+    public const int NULLREGION = 1;
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetRectRgn(IntPtr region, int left, int top, int right, int bottom);
+
+    // Whether anyone can see the screen: a locked session, displays off.
+
+    public const int WM_WTSSESSION_CHANGE = 0x02B1;
+    public const int WTS_SESSION_LOCK = 0x7;
+    public const int WTS_SESSION_UNLOCK = 0x8;
+    public const int WM_POWERBROADCAST = 0x0218;
+    public const int PBT_POWERSETTINGCHANGE = 0x8013;
+
+    /// <summary>GUID_CONSOLE_DISPLAY_STATE: the displays went off (0), on (1) or dim (2).</summary>
+    public static readonly Guid GUID_CONSOLE_DISPLAY_STATE = new("6FE69556-704A-47A0-8F24-C28D936FDA47");
+
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WTSRegisterSessionNotification(IntPtr hWnd, int flags);
+
+    [DllImport("wtsapi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WTSUnRegisterSessionNotification(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr RegisterPowerSettingNotification(IntPtr recipient, ref Guid setting, int flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnregisterPowerSettingNotification(IntPtr handle);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint processId);
 
