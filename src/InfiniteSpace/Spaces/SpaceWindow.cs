@@ -692,6 +692,18 @@ internal sealed partial class SpaceWindow : IDisposable
     /// <summary>Nobody can see it (covered by other windows, the session locked, the displays off): its ambient animation rests.</summary>
     internal bool Unseen { get; set; }
 
+    /// <summary>
+    /// Whether <see cref="RenderFrame"/> will draw the look for this frame, and the look can draw it on
+    /// another thread first (see <see cref="ISpaceLook.RendersOnAnyThread"/>): the same conditions as there.
+    /// </summary>
+    internal bool DrawsLookAheadOf(FrameState frame) =>
+        !_disposed && _following && _look.RendersOnAnyThread &&
+        !(_live is not null && IsReshaping) && !_restWhenStill && !(_draft && _live is not null && frame.Time - _lastLive >= DraftPause) &&
+        ((frame.AmbientDue && !Unseen) || _look.HasBursts || !_shown);
+
+    /// <summary>Draws the look for this frame now, on any thread (see <see cref="DrawsLookAheadOf"/>); <see cref="RenderFrame"/> shows it.</summary>
+    internal void DrawLookAhead(FrameState frame) => _look.Render(frame);
+
     /// <summary>Draws the next animation frame, if it looks different (and the space is showing).</summary>
     public void RenderFrame(FrameState frame)
     {

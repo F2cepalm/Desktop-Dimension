@@ -69,6 +69,7 @@ internal sealed class Universe : IDisposable
     private readonly List<SpaceWindow> _spaces = [];
     private readonly List<(SpaceWindow Window, int FramesLeft)> _retiring = [];
     private readonly List<IFramePart> _parts = [];
+    private readonly List<SpaceWindow> _drawingAhead = [];
     private readonly FrameClock _frames;
     private double _lastTick = double.NegativeInfinity;
     private double _lastFrame = double.NegativeInfinity;
@@ -249,6 +250,7 @@ internal sealed class Universe : IDisposable
                 _lastFrame = now;
             FramesRendered++;
             var frame = new FrameState(now, _look, ambientDue);
+            DrawAhead(frame);
             for (int i = 0; i < _spaces.Count; i++)
                 _spaces[i].RenderFrame(frame);
             for (int i = 0; i < _parts.Count; i++)
@@ -333,6 +335,24 @@ internal sealed class Universe : IDisposable
                 return rate;
         }
         return AmbientRates[^1];
+    }
+
+    /// <summary>
+    /// Spaces whose looks draw in plain memory (Dreamy's pixel art) draw this frame side by side on other
+    /// threads first, so many spaces cost about as much as the biggest one; the UI thread then only hands
+    /// the pictures to the compositor. Nothing else runs meanwhile: the UI thread waits for them.
+    /// </summary>
+    private void DrawAhead(FrameState frame)
+    {
+        _drawingAhead.Clear();
+        for (int i = 0; i < _spaces.Count; i++)
+        {
+            if (_spaces[i].DrawsLookAheadOf(frame))
+                _drawingAhead.Add(_spaces[i]);
+        }
+        if (_drawingAhead.Count < 2)
+            return; // one draws as fast where it is (a big one fills its rows on several threads itself)
+        Parallel.For(0, _drawingAhead.Count, i => _drawingAhead[i].DrawLookAhead(frame));
     }
 
     private bool AnyWantsEveryFrame()

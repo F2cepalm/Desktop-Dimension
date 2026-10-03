@@ -109,6 +109,37 @@ public class DreamRasterTests
         Assert.True(raster.IsInside(ToArt(Centre + new Vector(90, 0))));
     }
 
+    [Fact]
+    public void ALargeSpace_FilledInBandsOnSeveralThreads_LooksTheSameAsInOnePass()
+    {
+        // A big, holed, twice-crossing shape: bands start with edges carried over from above.
+        var big = SpaceGeometry.FromStroke([.. Blob().Select(p => new Point(p.X * 4, p.Y * 4))], (Vector)Centre);
+        var holed = SpaceGeometry.Subtract(big, SpaceGeometry.EraserStroke([Centre, Centre + new Vector(300, 120)], new Vector(0, 0), radius: 90))!;
+        var frames = new[] { new FrameState(0.5, new Vector(0, 0)), new FrameState(7.25, new Vector(30, -12)) };
+        int before = DreamRaster.ParallelPixels;
+        try
+        {
+            DreamRaster.ParallelPixels = int.MaxValue;
+            var single = new DreamRaster(holed, World(holed));
+            DreamRaster.ParallelPixels = 1;
+            var banded = new DreamRaster(holed, World(holed));
+            Assert.True(single.Width * single.Height > 100_000);
+
+            foreach (var frame in frames)
+            {
+                DreamRaster.ParallelPixels = int.MaxValue;
+                single.Render(frame);
+                DreamRaster.ParallelPixels = 1;
+                banded.Render(frame);
+                Assert.True(single.Pixels.AsSpan(0, single.Width * single.Height).SequenceEqual(banded.Pixels.AsSpan(0, banded.Width * banded.Height)));
+            }
+        }
+        finally
+        {
+            DreamRaster.ParallelPixels = before;
+        }
+    }
+
     private static Point ToArt(Point screen) => ToArt(screen, World(SpaceGeometry.FromStroke(Blob(), (Vector)Centre)));
 
     private static Point ToArt(Point screen, Rect world) =>

@@ -29,6 +29,13 @@ internal interface ISpaceLook : IDisposable
     /// <returns>Whether it looks different from the last frame (unchanged frames are not presented).</returns>
     bool Render(FrameState frame);
 
+    /// <summary>
+    /// Whether <see cref="Render"/> only works in the look's own memory (no GPU, nothing shared), so looks
+    /// of several spaces can render a frame side by side on other threads first; asked again for the same
+    /// frame, such a look then answers from what it drew.
+    /// </summary>
+    bool RendersOnAnyThread => false;
+
     /// <summary>Hands the current frame to the compositor.</summary>
     void Present(ISpaceCanvas canvas);
 

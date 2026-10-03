@@ -31,6 +31,8 @@ internal sealed class DreamRaster
     private int[] _rowStart = [];   // per row, where its edges start in _sorted (see FillVoid)
     private int[] _placed = [];
     private Edge[] _sorted = [];
+    private List<int>[] _bandActive = [];       // per band of rows filled side by side (see FillVoid); band 0 uses _active
+    private Crossing[][] _bandCrossings = [];   // likewise; band 0 uses _crossings
     private int[] _pixels;
     private int[] _next;
     private double _time;
@@ -50,7 +52,7 @@ internal sealed class DreamRaster
         _pixels = Buffer(recycle?._pixels, Width * Height);
         _next = Buffer(recycle?._next, Width * Height);
         if (recycle is not null)
-            (_rowStart, _placed, _sorted) = (recycle._rowStart, recycle._placed, recycle._sorted);
+            (_rowStart, _placed, _sorted, _bandActive, _bandCrossings) = (recycle._rowStart, recycle._placed, recycle._sorted, recycle._bandActive, recycle._bandCrossings);
 
         double scale = 1 / DreamStyle.ArtPixel;
         var toArt = new Matrix(scale, 0, 0, scale, -world.X * scale, -world.Y * scale);
@@ -73,6 +75,15 @@ internal sealed class DreamRaster
         _edges = recycle?._edges is { } edges && edges.Length >= edgeCount ? edges : new Edge[edgeCount + edgeCount / 2];
         _crossings = recycle?._crossings is { } crossings && crossings.Length >= edgeCount ? crossings : new Crossing[edgeCount + edgeCount / 2];
     }
+
+    /// <summary>
+    /// Rasters with at least this many art pixels fill their rows in bands on several threads (a large
+    /// space on a slow CPU); smaller ones aren't worth the hand-over. The picture is the same either way.
+    /// </summary>
+    internal static int ParallelPixels { get; set; } = 1 << 16;
+
+    private const int MinBandRows = 32;
+    private const int MaxBands = 8;
 
     public int Width { get; }
 
@@ -132,8 +143,7 @@ internal sealed class DreamRaster
             Wobble(contour);
 
         int count = Width * Height; // the buffers may be longer (see the constructor)
-        Array.Clear(_next, 0, count);
-        FillVoid();
+        FillVoid(); // clears the frame too, row by row
         DrawStars(frame);
         DrawSparks();
         DrawRim();
@@ -168,7 +178,7 @@ internal sealed class DreamRaster
         }
     }
 
-    /// <summary>Scanline fill of the wobbled outline (non-zero winding, pixel centres).</summary>
+    /// <summary>Clears the frame and fills the wobbled outline with the void (scanlines, non-zero winding, pixel centres).</summary>
     private void FillVoid()
     {
         // Edges go into buckets by the first row whose centre they reach (a counting sort: no
@@ -205,44 +215,84 @@ internal sealed class DreamRaster
         for (int i = 0; i < count; i++)
             _sorted[_placed[FirstRow(_edges[i].YMin)]++] = _edges[i];
 
-        _active.Clear();
-        for (int row = 0; row < Height; row++)
+        int bands = Width * Height >= ParallelPixels ? Math.Clamp(Math.Min(Environment.ProcessorCount, Height / MinBandRows), 1, MaxBands) : 1;
+        EnsureBands(bands);
+        if (bands == 1)
+            FillRows(0, Height, 0);
+        else
+            Parallel.For(0, bands, band => FillRows(band * Height / bands, (band + 1) * Height / bands, band));
+    }
+
+    /// <summary>Room for each band's active edges and crossings (every band can meet every edge).</summary>
+    private void EnsureBands(int bands)
+    {
+        if (_bandActive.Length < bands)
+        {
+            Array.Resize(ref _bandActive, bands);
+            Array.Resize(ref _bandCrossings, bands);
+        }
+        for (int band = 1; band < bands; band++)
+        {
+            _bandActive[band] ??= [];
+            if (_bandCrossings[band] is null || _bandCrossings[band].Length < _crossings.Length)
+                _bandCrossings[band] = new Crossing[_crossings.Length];
+        }
+    }
+
+    /// <summary>Clears rows <paramref name="from"/> to <paramref name="to"/> (not included) and fills the void in them.</summary>
+    private void FillRows(int from, int to, int band)
+    {
+        var active = band == 0 ? _active : _bandActive[band];
+        var crossingAt = band == 0 ? _crossings : _bandCrossings[band];
+        var rowStart = _rowStart;
+        _next.AsSpan(from * Width, (to - from) * Width).Clear();
+
+        // Edges that started above the band and still reach its first row (those that started in it join row by row).
+        active.Clear();
+        double top = from + 0.5;
+        for (int k = 0; k < rowStart[from]; k++)
+        {
+            if (_sorted[k].YMax > top)
+                active.Add(k);
+        }
+
+        for (int row = from; row < to; row++)
         {
             double yc = row + 0.5;
             for (int k = rowStart[row]; k < rowStart[row + 1]; k++)
-                _active.Add(k);
+                active.Add(k);
 
             int crossings = 0;
-            for (int k = _active.Count - 1; k >= 0; k--)
+            for (int k = active.Count - 1; k >= 0; k--)
             {
-                ref readonly var edge = ref _sorted[_active[k]];
+                ref readonly var edge = ref _sorted[active[k]];
                 if (edge.YMax <= yc)
                 {
-                    _active[k] = _active[^1];
-                    _active.RemoveAt(_active.Count - 1);
+                    active[k] = active[^1];
+                    active.RemoveAt(active.Count - 1);
                     continue;
                 }
 
                 // Insertion sort by x; rows cross only a handful of edges.
                 var crossing = new Crossing(edge.XAtYMin + (yc - edge.YMin) * edge.Slope, edge.Winding);
                 int at = crossings++;
-                while (at > 0 && _crossings[at - 1].X > crossing.X)
+                while (at > 0 && crossingAt[at - 1].X > crossing.X)
                 {
-                    _crossings[at] = _crossings[at - 1];
+                    crossingAt[at] = crossingAt[at - 1];
                     at--;
                 }
-                _crossings[at] = crossing;
+                crossingAt[at] = crossing;
             }
 
             int winding = 0;
             int rowOffset = row * Width;
             for (int k = 0; k < crossings - 1; k++)
             {
-                winding += _crossings[k].Winding;
+                winding += crossingAt[k].Winding;
                 if (winding == 0)
                     continue;
-                int x0 = Math.Max(0, (int)Math.Ceiling(_crossings[k].X - 0.5));
-                int x1 = Math.Min(Width, (int)Math.Ceiling(_crossings[k + 1].X - 0.5));
+                int x0 = Math.Max(0, (int)Math.Ceiling(crossingAt[k].X - 0.5));
+                int x1 = Math.Min(Width, (int)Math.Ceiling(crossingAt[k + 1].X - 0.5));
                 if (x1 > x0)
                     _next.AsSpan(rowOffset + x0, x1 - x0).Fill(VoidPixel);
             }
