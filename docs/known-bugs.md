@@ -13,6 +13,9 @@ Reported by the user on 3 October 2026, after the freeze and battery work (maste
   - The new reshape room: `MakeReshapeRoom`, which calls `Lay` on lift, and `ReshapeRoom` in `SpaceSurface`, `InkLayer` and `DreamRaster`. Check whether surfaces are being reallocated every frame. The `oversized` and `wasteful` rules in `Layer.Ensure` and `InkLayer.EnsureCapacity` might fight each other.
   - The idle pacing (`FrameClock.Pace`, `Universe.Hurry`). Ctrl+Alt+M drags come through the overlay's `WM_MOUSEMOVE` → `Hurry`. Check that ticks stay at the full rate during the drag.
   - The ambient-rate governor (`Universe.Govern`). Check whether it is starving frames.
+  - **Text cards are the exception.** A text card (made with W) resizes smoothly from both sides, without much stutter, even though its text reflows live on every frame. So text alone isn't the problem. Compare the two paths:
+    - Cards: `FitCardLive` sets the note's width, and the note is placed at the card's corner. Their height follows the text, so they never stretch vertically.
+    - Plain spaces: `PlaceNote` pushes notes, `PlaceStroke` maps strokes, the space stretches in both directions (the jelly), and the ink layer is redrawn and its mask rebuilt every frame.
   - **Not a new bug.** The user confirmed that the version before the performance work (`1d085fb`) lags too. It got worse after that work, so look for both the original cause (in the reshape and ink redraw path) and what the new changes made worse.
 
 ## 2. A text card's text drifts when the card is moved right after it is made, and Ctrl+Z misbehaves
