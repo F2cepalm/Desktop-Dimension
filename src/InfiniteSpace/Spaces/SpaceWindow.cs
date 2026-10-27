@@ -317,6 +317,7 @@ internal sealed partial class SpaceWindow : IDisposable
     {
         if (_disposed)
             return;
+        Universe?.Hurry();
         _live = (outline, toScreen);
         _liveChanged = true;
         // Only Dreamy wobbles; and none while Windows' "Show animations" is off, nor in software drawing.
@@ -348,18 +349,21 @@ internal sealed partial class SpaceWindow : IDisposable
         _lastLive = _lastFrame.Time;
         var (outline, toScreen) = _live!.Value;
         _liveChanged = false;
+        Rect? warpedBounds = null;
         if (_jelly.IsMoving)
         {
             var shown = _jelly.Shown;
             toScreen.Append(HostFrames.Map(_jelly.Rest, shown)); // the outline wobbles (paint and text are placed on their own)
-            outline = SpaceGeometry.Warp(outline, _jelly.Mapper(shown), JellyStep);
+            Outline2D.WarpNext(outline, _jelly.Mapper(shown), JellyStep, out var wb);
+            warpedBounds = wb;
         }
         else
         {
             _jellyTime = double.NaN;
         }
         _toScreen = toScreen;
-        Lay(outline, draft);
+        Lay(outline, draft, warpedBounds);
+        Outline2D.EndWarp();
         _regionStale = true; // made once, when it lands; meanwhile the overlay above takes the mouse
         _look.Render(_lastFrame);
         _needsPresent = true;
@@ -386,10 +390,10 @@ internal sealed partial class SpaceWindow : IDisposable
     /// window's place and size (for when it is in its own window), and its ink redrawn.
     /// </summary>
     /// <param name="draft">A shape changing every frame (a live reshape): the look may take shortcuts.</param>
-    private void Lay(Geometry outline, bool draft = false)
+    private void Lay(Geometry outline, bool draft = false, Rect? knownBounds = null)
     {
         _outline = outline;
-        var bounds = outline.Bounds;
+        var bounds = knownBounds ?? outline.Bounds;
         bounds.Inflate(RimRoom, RimRoom);
         // Snap to the art-pixel grid so all spaces share one pixel grid (and one star field).
         const double grid = DreamStyle.ArtPixel;
@@ -524,6 +528,7 @@ internal sealed partial class SpaceWindow : IDisposable
     {
         if (_disposed)
             return;
+        Universe?.Hurry();
         _outline = outline;
         _toScreen = toScreen;
         _world.Offset(offset);
@@ -548,6 +553,7 @@ internal sealed partial class SpaceWindow : IDisposable
     {
         if (_disposed)
             return;
+        Universe?.Hurry();
         _toScreen = toScreen;
         ShowAt(Rect.Transform(_world, relative));
     }
@@ -676,7 +682,7 @@ internal sealed partial class SpaceWindow : IDisposable
             _ink.ReshapeRoom = factor;
         if (room)
         {
-            Lay(_outline); // made with the room right away: the next frame draws into them
+            Lay(_outline, draft: true); // made with the room right away: the next frame draws into them
             if (_shown && !_hidden)
             {
                 _look.Render(_lastFrame);
@@ -688,9 +694,14 @@ internal sealed partial class SpaceWindow : IDisposable
                 _needsPresent = true;
             }
         }
-        else if (_ink is not null && _ink.IsCropped)
+        else if (_draft || (_ink is not null && _ink.IsCropped))
         {
-            RedrawInk();
+            Lay(_outline, draft: false);
+            if (_shown && !_hidden)
+            {
+                _look.Render(_lastFrame);
+                Present();
+            }
         }
     }
 
@@ -819,14 +830,17 @@ internal sealed partial class SpaceWindow : IDisposable
             _placementChanged = false;
         }
 
+        bool hasInk = _ink is not null && !_inkDirty.IsEmpty;
+        if (hasInk)
+            _surface.StageInk(_ink!, _inkDirty);
         if (_lookDirty)
         {
             _look.Present(_surface);
             _lookDirty = false;
         }
-        if (_ink is not null && !_inkDirty.IsEmpty)
+        if (hasInk)
         {
-            _surface.ShowInk(_ink, _inkDirty);
+            _surface.FlushInk();
             _inkDirty = Int32Rect.Empty;
         }
         _needsPresent = false;
@@ -1237,7 +1251,9 @@ internal sealed partial class SpaceWindow : IDisposable
         {
             _strokePen = Pen;
             _strokeColor = InkColors.Resolve(_strokePen.Color, ThemeInk);
-            _stroke = [_pressedAt];
+            if (_stroke.Capacity < 256)
+                _stroke.Capacity = 256;
+            _stroke.Add(_pressedAt);
             _inkDirty = InkLayer.Union(_inkDirty, EnsureInk().AddSegment(_pressedAt, _pressedAt, _strokePen.Thickness, _strokeColor));
             PaintingStarted?.Invoke(this);
         }
@@ -1256,7 +1272,7 @@ internal sealed partial class SpaceWindow : IDisposable
             return;
         // Painted on screen; kept in the record's coordinates (they differ while the app is stretched).
         _record.Strokes.Add(InkStroke.FromScreen(_stroke, _toScreen, _strokePen));
-        _stroke = [];
+        _stroke.Clear();
         InkChanged?.Invoke(this);
     }
 

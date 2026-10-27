@@ -384,10 +384,18 @@ internal sealed class InkStroke : IInk
         var toRecord = toScreen;
         if (toRecord.HasInverse)
             toRecord.Invert();
-        var corner = new Point(points.Min(p => p.X), points.Min(p => p.Y));
+        double minX = double.PositiveInfinity, minY = double.PositiveInfinity;
+        int count = points.Count;
+        for (int i = 0; i < count; i++)
+        {
+            var pt = points[i];
+            if (pt.X < minX) minX = pt.X;
+            if (pt.Y < minY) minY = pt.Y;
+        }
+        var corner = new Point(minX, minY);
         var shift = toRecord.Transform(corner) - corner;
-        var xy = new double[points.Count * 2];
-        for (int i = 0; i < points.Count; i++)
+        var xy = new double[count * 2];
+        for (int i = 0; i < count; i++)
         {
             var p = points[i] + shift;
             xy[i * 2] = Math.Round(p.X, 2);

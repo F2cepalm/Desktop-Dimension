@@ -44,9 +44,13 @@ internal static class AppWindows
         return text.ToString();
     }
 
+    [ThreadStatic]
+    private static StringBuilder? t_class;
+
     public static string ClassOf(IntPtr hwnd)
     {
-        var name = new StringBuilder(256);
+        var name = t_class ??= new StringBuilder(256);
+        name.Clear();
         Win32.GetClassName(hwnd, name, name.Capacity);
         return name.ToString();
     }

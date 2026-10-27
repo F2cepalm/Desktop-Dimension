@@ -42,15 +42,19 @@ internal sealed class InkLayer : IDisposable
     private readonly Dictionary<TextNote, CachedNote> _notes = [];
     private readonly Dictionary<TextNote, CachedDocument> _documents = [];
     private readonly Dictionary<(bool Top, bool Bottom), ID2D1GradientStopCollection> _fades = [];
+    private readonly Dictionary<(bool Top, bool Bottom), ID2D1LinearGradientBrush> _fadeBrushes = [];
     private readonly List<InkStroke> _unusedStrokes = [];
     private readonly List<TextNote> _unusedNotes = [];
     private readonly List<Segment> _pending = [];
     private readonly List<DrawnStroke> _drawnStrokes = [];
     private readonly List<DrawnNote> _drawnNotes = [];
+    private Rect _drawnStrokesBounds = Rect.Empty;
     private ID2D1Bitmap1? _ink;
+    private ID2D1BitmapBrush1? _inkBrush;
     private ID2D1Bitmap1? _mask;
-    private ID2D1Bitmap1? _still;             // the ink that stays put while a selection is dragged (see Redraw)
+    private ID2D1Bitmap1? _still;             // the ink that stays put while a selection is dragged or notes are pushed (see Redraw)
     private Func<IInk, bool>? _stillWithout;  // what moves over it; null when there is no still picture
+    private bool _stillHasStrokes;            // whether _still holds the stationary strokes while notes are pushed during reshape
     private ID2D1DeviceContext1? _context1;
     private IntPtr _context1Of;
     private ID2D1StrokeStyle? _round;
@@ -192,46 +196,104 @@ internal sealed class InkLayer : IDisposable
             }
         }
 
-        ReleaseStill();
+        if (_stillWithout is not null)
+            ReleaseStill();
         bool wantCropped = _room > 1 && moving is null && adornments is null;
-        if (moving is null && adornments is null && _cropped == wantCropped && CanKeepInk(record, toScreen, skip, placeNote, opacity, placeStroke))
+        bool strokesMatch = moving is null && adornments is null && _cropped == wantCropped && CanKeepStrokes(record, toScreen, skip, placeStroke);
+        if (strokesMatch && CanKeepNotes(record, toScreen, skip, placeNote, opacity))
             return Bounds;
 
         if (wantCropped)
         {
-            var inkBounds = MeasureInkBounds(record, toScreen, skip, placeNote, opacity, placeStroke);
+            var inkBounds = MeasureInkBounds(record, toScreen, skip, placeNote, opacity, placeStroke, strokesMatch);
             int ox = (int)Math.Floor((inkBounds.Left - _origin.X) * _scale);
             int oy = (int)Math.Floor((inkBounds.Top - _origin.Y) * _scale);
+            var candidateOrigin = new Point(_origin.X + ox / _scale, _origin.Y + oy / _scale);
             int max = (int)Math.Min(16384, _gpu.D2DContext.MaximumBitmapSize);
-            _drawnOrigin = new Point(_origin.X + ox / _scale, _origin.Y + oy / _scale);
-            _drawnWidth = Math.Clamp((int)Math.Ceiling((inkBounds.Right - _drawnOrigin.X) * _scale), 1, max);
-            _drawnHeight = Math.Clamp((int)Math.Ceiling((inkBounds.Bottom - _drawnOrigin.Y) * _scale), 1, max);
+            int candidateWidth = Math.Clamp((int)Math.Ceiling((inkBounds.Right - candidateOrigin.X) * _scale), 1, max);
+            int candidateHeight = Math.Clamp((int)Math.Ceiling((inkBounds.Bottom - candidateOrigin.Y) * _scale), 1, max);
+            double prevDx = (_origin.X - _drawnOrigin.X) * _scale, prevDy = (_origin.Y - _drawnOrigin.Y) * _scale;
+            bool prevGridAligned = _cropped && _scale == _drawnScale &&
+                Math.Abs(prevDx - Math.Round(prevDx)) <= 1e-2 && Math.Abs(prevDy - Math.Round(prevDy)) <= 1e-2;
+            double oldRight = _drawnOrigin.X + _drawnWidth / _scale;
+            double oldBottom = _drawnOrigin.Y + _drawnHeight / _scale;
+            double newRight = candidateOrigin.X + candidateWidth / _scale;
+            double newBottom = candidateOrigin.Y + candidateHeight / _scale;
+            if (!prevGridAligned)
+            {
+                _drawnOrigin = candidateOrigin;
+                _drawnWidth = candidateWidth;
+                _drawnHeight = candidateHeight;
+                _stillHasStrokes = false;
+            }
+            else if (candidateOrigin.X < _drawnOrigin.X || candidateOrigin.Y < _drawnOrigin.Y || newRight > oldRight || newBottom > oldBottom)
+            {
+                var unionOrigin = new Point(Math.Min(_drawnOrigin.X, candidateOrigin.X), Math.Min(_drawnOrigin.Y, candidateOrigin.Y));
+                _drawnWidth = Math.Clamp((int)Math.Ceiling((Math.Max(oldRight, newRight) - unionOrigin.X) * _scale), 1, max);
+                _drawnHeight = Math.Clamp((int)Math.Ceiling((Math.Max(oldBottom, newBottom) - unionOrigin.Y) * _scale), 1, max);
+                _drawnOrigin = unionOrigin;
+                _stillHasStrokes = false;
+            }
             _cropped = true;
             _maskStale = true;
         }
         else
         {
+            ReleaseStill();
             _drawnOrigin = _origin;
             _drawnWidth = Width;
             _drawnHeight = Height;
             _cropped = false;
             _maskStale = true;
         }
+        if (!strokesMatch)
+            _stillHasStrokes = false;
         EnsureCapacity(_drawnWidth, _drawnHeight);
         var world = World(_drawnOrigin);
         _generation++;
+        bool useStillStrokes = wantCropped && record.Strokes.Count > 0 && record.Notes.Count > 0;
+        if (useStillStrokes && !_stillHasStrokes)
+        {
+            _still ??= _gpu.D2DContext.CreateBitmap(new SizeI(_capacityWidth, _capacityHeight), IntPtr.Zero, 0, new BitmapProperties1(GpuCompositor.Bgra, 96, 96, BitmapOptions.Target));
+            var stillContext = Begin(_still);
+            stillContext.PushAxisAlignedClip(new RawRectF(0, 0, _drawnWidth, _drawnHeight), AntialiasMode.Aliased);
+            stillContext.Clear(new Color4(0, 0, 0, 0));
+            DrawItems(stillContext, record, toScreen, skip, placeNote, opacity, placeStroke, world, static item => item is InkStroke);
+            stillContext.PopAxisAlignedClip();
+            End(stillContext);
+            _stillHasStrokes = true;
+        }
         var context = Begin(_ink!);
         context.PushAxisAlignedClip(new RawRectF(0, 0, _drawnWidth, _drawnHeight), AntialiasMode.Aliased);
-        context.Clear(new Color4(0, 0, 0, 0));
-        bool fading = DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, null);
+        bool fading;
+        if (useStillStrokes)
+        {
+            var drawnRect = new RawRectF(0, 0, _drawnWidth, _drawnHeight);
+            context.DrawImage(_still!, Vector2.Zero, drawnRect, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+            fading = DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, static item => item is TextNote);
+            if (!strokesMatch)
+            {
+                foreach (var stroke in record.Strokes)
+                {
+                    if (_strokes.TryGetValue(stroke, out var cached))
+                        cached.Generation = _generation;
+                }
+            }
+        }
+        else
+        {
+            context.Clear(new Color4(0, 0, 0, 0));
+            fading = DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, null);
+        }
         if (adornments is not null)
             DrawAdornments(context, adornments, world);
         context.PopAxisAlignedClip();
         End(context);
-        ForgetUnused();
+        if (!strokesMatch || record.Notes.Count != _drawnNotes.Count)
+            ForgetUnused();
         _inkRevision++;
         if (moving is null && adornments is null && !fading)
-            RecordDrawnInk(record, toScreen, skip, placeNote, opacity, placeStroke);
+            RecordDrawnInk(record, toScreen, skip, placeNote, opacity, placeStroke, strokesMatch);
         else
         {
             _inkDrawn = false;
@@ -240,21 +302,25 @@ internal sealed class InkLayer : IDisposable
         return Bounds;
     }
 
-    private Rect MeasureInkBounds(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke)
+    private Rect MeasureInkBounds(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke, bool strokesMatch = false)
     {
-        var bounds = Rect.Empty;
-        foreach (var stroke in record.Strokes)
+        var bounds = strokesMatch ? _drawnStrokesBounds : Rect.Empty;
+        if (!strokesMatch)
         {
-            var points = stroke.Points;
-            if (points.Length < 2)
-                continue;
-            var m = placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor);
-            double reach = stroke.Thickness / 2 + 4;
-            var box = points.Length < 4
-                ? new Rect(m.Transform(new Point(points[0], points[1])), new Size(0, 0))
-                : Rect.Transform(stroke.Box, m);
-            box.Inflate(reach, reach);
-            bounds.Union(box);
+            foreach (var stroke in record.Strokes)
+            {
+                var points = stroke.Points;
+                if (points.Length < 2)
+                    continue;
+                var m = placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor);
+                double reach = stroke.Thickness / 2 + 4;
+                var box = points.Length < 4
+                    ? new Rect(m.Transform(new Point(points[0], points[1])), new Size(0, 0))
+                    : Rect.Transform(stroke.Box, m);
+                box.Inflate(reach, reach);
+                bounds.Union(box);
+            }
+            _drawnStrokesBounds = bounds;
         }
         foreach (var note in record.Notes)
         {
@@ -274,7 +340,7 @@ internal sealed class InkLayer : IDisposable
             else
             {
                 var cached = NoteLayout(note);
-                var metrics = cached.Layout.Metrics;
+                var metrics = cached.Metrics;
                 double pad = Math.Max(8, note.FontSize * 0.5);
                 double width = Math.Max(metrics.WidthIncludingTrailingWhitespace, metrics.Width) + 2 * pad;
                 double height = metrics.Height + 2 * pad;
@@ -287,10 +353,9 @@ internal sealed class InkLayer : IDisposable
     }
 
     /// <summary>
-    /// Whether <see cref="_ink"/> already holds what <see cref="Redraw"/> would draw across its whole
-    /// capacity (e.g. a space being reshaped whose paint and text have not moved on screen).
+    /// Whether the strokes drawn in <see cref="_ink"/> are still at the same screen positions and scale.
     /// </summary>
-    private bool CanKeepInk(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke)
+    private bool CanKeepStrokes(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<InkStroke, Matrix>? placeStroke)
     {
         if (!_inkDrawn || _scale != _drawnScale || ThemeInk != _drawnThemeInk || ThemeAccent != _drawnThemeAccent || skip != _drawnSkip)
             return false;
@@ -310,6 +375,14 @@ internal sealed class InkLayer : IDisposable
             if (!ReferenceEquals(stroke, drawn.Stroke) || !ReferenceEquals(stroke.Points, drawn.Points) || stroke.Revision != drawn.Revision || stroke.Thickness != drawn.Thickness || stroke.Color != drawn.Color || m != drawn.ToScreen)
                 return false;
         }
+        return true;
+    }
+
+    /// <summary>
+    /// Whether the text notes drawn in <see cref="_ink"/> are still at the same screen positions and state.
+    /// </summary>
+    private bool CanKeepNotes(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity)
+    {
         int noteIndex = 0;
         foreach (var note in record.Notes)
         {
@@ -329,18 +402,21 @@ internal sealed class InkLayer : IDisposable
         return noteIndex == _drawnNotes.Count;
     }
 
-    private void RecordDrawnInk(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke)
+    private void RecordDrawnInk(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke, bool strokesMatch = false)
     {
         _inkDrawn = true;
         _drawnScale = _scale;
         _drawnThemeInk = ThemeInk;
         _drawnThemeAccent = ThemeAccent;
         _drawnSkip = skip;
-        _drawnStrokes.Clear();
-        foreach (var stroke in record.Strokes)
+        if (!strokesMatch)
         {
-            var m = placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor);
-            _drawnStrokes.Add(new DrawnStroke(stroke, stroke.Points, stroke.Revision, stroke.Thickness, stroke.Color, m));
+            _drawnStrokes.Clear();
+            foreach (var stroke in record.Strokes)
+            {
+                var m = placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor);
+                _drawnStrokes.Add(new DrawnStroke(stroke, stroke.Points, stroke.Revision, stroke.Thickness, stroke.Color, m));
+            }
         }
         _drawnNotes.Clear();
         foreach (var note in record.Notes)
@@ -363,6 +439,7 @@ internal sealed class InkLayer : IDisposable
     private bool PaintStill(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke, Matrix3x2 world, Func<IInk, bool> moving)
     {
         _stillWithout = null;
+        _stillHasStrokes = false;
         _still ??= _gpu.D2DContext.CreateBitmap(new SizeI(_capacityWidth, _capacityHeight), IntPtr.Zero, 0, new BitmapProperties1(GpuCompositor.Bgra, 96, 96, BitmapOptions.Target));
         _generation++; // this frame draws all of the ink, still and moving: what isn't drawn is let go
         var context = Begin(_still);
@@ -394,6 +471,7 @@ internal sealed class InkLayer : IDisposable
     private void ReleaseStill()
     {
         _stillWithout = null;
+        _stillHasStrokes = false;
         _still?.Dispose();
         _still = null;
     }
@@ -510,17 +588,22 @@ internal sealed class InkLayer : IDisposable
 
     /// <summary>
     /// Where the cropped ink bitmap sits in the window (device pixels), the part of it inside the
-    /// window, and whether that part lies wholly inside the space's outline (so no mask is needed).
+    /// space's outline bounds, and whether that part lies wholly inside the space's outline (so no mask is needed).
     /// </summary>
     public void GetCroppedPlacement(out Int2 offset, out Int32Rect visible, out bool unclipped)
     {
         int ox = (int)Math.Round((_drawnOrigin.X - _origin.X) * _scale);
         int oy = (int)Math.Round((_drawnOrigin.Y - _origin.Y) * _scale);
         offset = new Int2(ox, oy);
-        int vx0 = Math.Clamp(-ox, 0, _drawnWidth);
-        int vy0 = Math.Clamp(-oy, 0, _drawnHeight);
-        int vx1 = Math.Clamp(Width - ox, 0, _drawnWidth);
-        int vy1 = Math.Clamp(Height - oy, 0, _drawnHeight);
+        var outlineBounds = _outline.Bounds;
+        int bx0 = outlineBounds.IsEmpty ? 0 : Math.Clamp((int)Math.Round(outlineBounds.Left * _scale), 0, Width);
+        int by0 = outlineBounds.IsEmpty ? 0 : Math.Clamp((int)Math.Round(outlineBounds.Top * _scale), 0, Height);
+        int bx1 = outlineBounds.IsEmpty ? 0 : Math.Clamp((int)Math.Round(outlineBounds.Right * _scale), 0, Width);
+        int by1 = outlineBounds.IsEmpty ? 0 : Math.Clamp((int)Math.Round(outlineBounds.Bottom * _scale), 0, Height);
+        int vx0 = Math.Clamp(bx0 - ox, 0, _drawnWidth);
+        int vy0 = Math.Clamp(by0 - oy, 0, _drawnHeight);
+        int vx1 = Math.Clamp(bx1 - ox, 0, _drawnWidth);
+        int vy1 = Math.Clamp(by1 - oy, 0, _drawnHeight);
         if (vx1 <= vx0 || vy1 <= vy0)
         {
             visible = Int32Rect.Empty;
@@ -528,19 +611,48 @@ internal sealed class InkLayer : IDisposable
             return;
         }
         visible = new Int32Rect(vx0, vy0, vx1 - vx0, vy1 - vy0);
-        var visibleDip = new Rect((ox + vx0) / _scale, (oy + vy0) / _scale, (vx1 - vx0) / _scale, (vy1 - vy0) / _scale);
+        double inset = 0.5 / _scale;
+        double dw = Math.Max(0, (vx1 - vx0) / _scale - 2 * inset);
+        double dh = Math.Max(0, (vy1 - vy0) / _scale - 2 * inset);
+        var visibleDip = new Rect((ox + vx0) / _scale + inset, (oy + vy0) / _scale + inset, dw, dh);
         unclipped = _outline.Covers(visibleDip);
     }
 
-    /// <summary>Copies the cropped ink bitmap into the target at <paramref name="at"/>, masked only when <paramref name="unclipped"/> is false.</summary>
-    public void ComposeCropped(ID2D1DeviceContext context, Vector2 at, bool unclipped)
+    /// <summary>Copies the cropped ink bitmap into the target at <paramref name="at"/>, masked over <paramref name="visible"/> when <paramref name="unclipped"/> is false.</summary>
+    public void ComposeCropped(ID2D1DeviceContext context, Vector2 at, Int32Rect visible, bool unclipped, bool clearFirst = true)
     {
+        if (unclipped)
+        {
+            context.Transform = Matrix3x2.CreateTranslation(at.X, at.Y);
+            var rect = new RawRectF(0, 0, _drawnWidth, _drawnHeight);
+            context.PushAxisAlignedClip(rect, AntialiasMode.Aliased);
+            context.DrawImage(_ink!, Vector2.Zero, rect, InterpolationMode.NearestNeighbor, clearFirst ? CompositeMode.SourceCopy : CompositeMode.SourceOver);
+            context.PopAxisAlignedClip();
+            context.Transform = Matrix3x2.Identity;
+            return;
+        }
+
         context.Transform = Matrix3x2.CreateTranslation(at.X, at.Y);
-        var rect = new RawRectF(0, 0, _drawnWidth, _drawnHeight);
-        context.PushAxisAlignedClip(rect, AntialiasMode.Aliased);
-        context.DrawImage(_ink!, Vector2.Zero, rect, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
-        if (!unclipped)
-            context.DrawImage(_mask!, Vector2.Zero, rect, InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
+        var clip = new RawRectF(visible.X, visible.Y, visible.X + visible.Width, visible.Y + visible.Height);
+        context.PushAxisAlignedClip(clip, AntialiasMode.Aliased);
+        if (clearFirst)
+            context.Clear(new Color4(0, 0, 0, 0));
+        if (_outline.Figures.Length > 0)
+        {
+            using var shape = _outline.ToPath(_gpu.D2DFactory);
+            _inkBrush ??= context.CreateBitmapBrush(_ink, new BitmapBrushProperties1
+            {
+                ExtendModeX = ExtendMode.Clamp,
+                ExtendModeY = ExtendMode.Clamp,
+                InterpolationMode = InterpolationMode.NearestNeighbor,
+            });
+            _inkBrush.Transform = Matrix3x2.CreateScale((float)(1 / _scale)) *
+                Matrix3x2.CreateTranslation((float)(_drawnOrigin.X - _origin.X), (float)(_drawnOrigin.Y - _origin.Y));
+            context.Transform = Matrix3x2.CreateTranslation((float)(_origin.X - _drawnOrigin.X), (float)(_origin.Y - _drawnOrigin.Y)) *
+                Matrix3x2.CreateScale((float)_scale) *
+                Matrix3x2.CreateTranslation(at.X, at.Y);
+            context.FillGeometry(shape, _inkBrush);
+        }
         context.PopAxisAlignedClip();
         context.Transform = Matrix3x2.Identity;
     }
@@ -594,12 +706,17 @@ internal sealed class InkLayer : IDisposable
         foreach (var document in _documents.Values)
             document.Document.Dispose();
         _documents.Clear();
+        foreach (var fade in _fadeBrushes.Values)
+            fade.Dispose();
+        _fadeBrushes.Clear();
         foreach (var fade in _fades.Values)
             fade.Dispose();
         _fades.Clear();
         _context1?.Dispose();
         _dashed?.Dispose();
         _round?.Dispose();
+        _inkBrush?.Dispose();
+        _inkBrush = null;
         _ink?.Dispose();
         _mask?.Dispose();
         _still?.Dispose();
@@ -674,6 +791,8 @@ internal sealed class InkLayer : IDisposable
         }
         _drawnWidth = Math.Min(_drawnWidth, _capacityWidth);
         _drawnHeight = Math.Min(_drawnHeight, _capacityHeight);
+        _inkBrush?.Dispose();
+        _inkBrush = null;
         _ink?.Dispose();
         _mask?.Dispose();
         ReleaseStill(); // made again at the new size if a drag goes on
@@ -826,10 +945,18 @@ internal sealed class InkLayer : IDisposable
             return;
         context.PushAxisAlignedClip(new RawRectF(0, top, width, height), AntialiasMode.Aliased);
         bool fadeTop = scroll > 0.5, fadeBottom = scroll < document.MaxScroll(height) - 0.5;
-        ID2D1LinearGradientBrush? fade = null;
         if (fadeTop || fadeBottom)
         {
-            fade = context.CreateLinearGradientBrush(new LinearGradientBrushProperties(new Vector2(0, top), new Vector2(0, height)), Fades(context, fadeTop, fadeBottom));
+            if (!_fadeBrushes.TryGetValue((fadeTop, fadeBottom), out var fade))
+            {
+                fade = context.CreateLinearGradientBrush(new LinearGradientBrushProperties(new Vector2(0, top), new Vector2(0, height)), Fades(context, fadeTop, fadeBottom));
+                _fadeBrushes[(fadeTop, fadeBottom)] = fade;
+            }
+            else
+            {
+                fade.StartPoint = new Vector2(0, top);
+                fade.EndPoint = new Vector2(0, height);
+            }
             context.PushLayer(new LayerParameters1
             {
                 ContentBounds = new RawRectF(0, top, width, height),
@@ -851,11 +978,8 @@ internal sealed class InkLayer : IDisposable
         }
 
         context.Transform = place;
-        if (fade is not null)
-        {
+        if (fadeTop || fadeBottom)
             context.PopLayer();
-            fade.Dispose();
-        }
         context.PopAxisAlignedClip();
     }
 
@@ -883,12 +1007,15 @@ internal sealed class InkLayer : IDisposable
         if (paragraph.Layout is null)
             return;
         float textX = x + (float)paragraph.Padding, textY = (float)paragraph.TextTop;
-        if (source.Kind == ParagraphKind.Text && source.Runs.Any(r => r.Style.HasFlag(TextStyle.Code)))
+        if (source.Kind == ParagraphKind.Text)
         {
-            paragraph.CodeBackings ??= CodeBackings(paragraph);
-            var backing = Brush(context, Color.FromArgb(0x24, inkColor.R, inkColor.G, inkColor.B));
-            foreach (var rect in paragraph.CodeBackings)
-                context.FillRoundedRectangle(new RoundedRectangle(new RawRectF(textX + (float)rect.Left - 2, textY + (float)rect.Top, textX + (float)rect.Right + 2, textY + (float)rect.Bottom), 3, 3), backing);
+            var backings = paragraph.CodeBackings ??= CodeBackings(paragraph);
+            if (backings.Count > 0)
+            {
+                var backing = Brush(context, Color.FromArgb(0x24, inkColor.R, inkColor.G, inkColor.B));
+                foreach (var rect in backings)
+                    context.FillRoundedRectangle(new RoundedRectangle(new RawRectF(textX + (float)rect.Left - 2, textY + (float)rect.Top, textX + (float)rect.Right + 2, textY + (float)rect.Bottom), 3, 3), backing);
+            }
         }
         if (paragraph.Marker is not null)
             context.DrawTextLayout(new Vector2(x - s * 1.6f - s * 0.35f, textY), paragraph.Marker, ink, DrawTextOptions.None); // boxes in the ink's colour, not as emoji
@@ -1096,6 +1223,8 @@ internal sealed class InkLayer : IDisposable
     private sealed class CachedNote(Vortice.DirectWrite.IDWriteTextLayout layout, string text, double fontSize, double? width, bool bold, bool italic)
     {
         public Vortice.DirectWrite.IDWriteTextLayout Layout { get; } = layout;
+
+        public Vortice.DirectWrite.TextMetrics Metrics { get; } = layout.Metrics;
 
         public int Generation { get; set; }
 

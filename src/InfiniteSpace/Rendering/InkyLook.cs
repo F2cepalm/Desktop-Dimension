@@ -31,28 +31,58 @@ internal sealed class InkyLook : ISpaceLook
     private IntPtr _context1Of;
 
     private readonly List<Splash> _splashes = [];
+    private readonly List<Contour> _contours = [];
     private Geometry _outline = Geometry.Empty;
     private Rect _world;
     private Rect _bounds;
     private FillMode _fillMode = FillMode.Winding;
-    private Contour[] _contours = [];
     private long _boil = long.MinValue;
     private double _time;
     private bool _dirty = true;
+    private bool _draft;
+    private double _room = 1;
+    private bool _expand;
     private ID2D1SolidColorBrush? _clayBrush;
     private ID2D1SolidColorBrush? _inkBrush;
 
     public bool HasBursts => _splashes.Count > 0;
 
-    public void SetShape(Geometry outline, Rect world)
+    public double ReshapeRoom
     {
+        get => _room;
+        set
+        {
+            _expand = value > _room;
+            _room = value;
+        }
+    }
+
+    public void SetShape(Geometry outline, Rect world) => SetShape(outline, world, draft: false);
+
+    public void SetShape(Geometry outline, Rect world, bool draft)
+    {
+        _draft = draft;
         _outline = outline;
         _world = world;
         _bounds = outline.Bounds;
-        var flattened = SpaceGeometry.Flat(outline);
+        var flattened = SpaceGeometry.Flat(outline, out var toWindow);
+        toWindow.Translate(-world.X, -world.Y);
         _fillMode = flattened.FillRule == FillRule.EvenOdd ? FillMode.Alternate : FillMode.Winding;
-        var offset = new Vector(-world.X, -world.Y);
-        _contours = [.. flattened.Figures.Select(f => Contour.Build(f, offset)).OfType<Contour>()];
+        double room = _expand ? _room : 1;
+        _expand = false;
+        int built = 0;
+        foreach (var figure in flattened.Figures)
+        {
+            if (Contour.Build(figure, toWindow, built < _contours.Count ? _contours[built] : null, room, draft) is not { } contour)
+                continue;
+            if (built < _contours.Count)
+                _contours[built] = contour;
+            else
+                _contours.Add(contour);
+            built++;
+        }
+        if (_contours.Count > built)
+            _contours.RemoveRange(built, _contours.Count - built);
         ForgetDrawings();
         _dirty = true;
     }
@@ -113,7 +143,7 @@ internal sealed class InkyLook : ISpaceLook
         int drawing = (int)(((_boil % BoilDrawings) + BoilDrawings) % BoilDrawings);
         var boil = new BoilFrame(drawing);
 
-        if (_splashes.Count == 0 && Context1(context) is { } context1)
+        if (!_draft && _splashes.Count == 0 && Context1(context) is { } context1)
         {
             // At rest the line only boils: its drawings are tessellated once and redrawn from then on.
             var cached = _drawings[drawing] ??= Realize(context1, factory, boil);
@@ -253,55 +283,46 @@ internal sealed class InkyLook : ISpaceLook
     /// <summary>A closed outline in window DIPs, resampled evenly, with normals and a fixed brush-width pattern.</summary>
     private sealed class Contour
     {
-        private readonly Vector2[] _center;
-        private readonly Vector2[] _outer;
-        private readonly Vector2[] _inner;
+        [ThreadStatic]
+        private static List<Point>? t_raw;
 
-        private Contour(Point[] points, Vector[] normals, double perimeter)
+        private Point[] _points = [];
+        private Vector[] _normals = [];
+        private Vector2[] _center = [];
+        private Vector2[] _outer = [];
+        private Vector2[] _inner = [];
+        private int _count;
+
+        private double ShiftRate1 { get; set; }
+
+        private double ShiftRate2 { get; set; }
+
+        private double WidthRate1 { get; set; }
+
+        private double WidthRate2 { get; set; }
+
+        private double WidthPhase1 { get; set; }
+
+        private double WidthPhase2 { get; set; }
+
+        public static Contour? Build(PathFigure figure, Matrix toWindow, Contour? reuse = null, double room = 1, bool draft = false)
         {
-            Points = points;
-            Normals = normals;
-            int n = points.Length;
-            _center = new Vector2[n];
-            _outer = new Vector2[n];
-            _inner = new Vector2[n];
-
-            // Whole numbers of waves around the loop, so nothing jumps where it closes.
-            double Rate(double wavelength) => Math.Tau * Math.Max(1, Math.Round(perimeter / wavelength)) / n;
-            ShiftRate1 = Rate(60);
-            ShiftRate2 = Rate(23);
-            WidthRate1 = Rate(140);
-            WidthRate2 = Rate(45);
-            WidthPhase1 = perimeter * 0.618 % Math.Tau;
-            WidthPhase2 = perimeter * 0.377 % Math.Tau;
-        }
-
-        private Point[] Points { get; }
-
-        private Vector[] Normals { get; }
-
-        private double ShiftRate1 { get; }
-
-        private double ShiftRate2 { get; }
-
-        private double WidthRate1 { get; }
-
-        private double WidthRate2 { get; }
-
-        private double WidthPhase1 { get; }
-
-        private double WidthPhase2 { get; }
-
-        public static Contour? Build(PathFigure figure, Vector offset)
-        {
-            var raw = new List<Point> { figure.StartPoint + offset };
+            var raw = t_raw ??= [];
+            raw.Clear();
+            raw.Add(toWindow.Transform(figure.StartPoint));
             foreach (var segment in figure.Segments)
             {
                 if (segment is LineSegment line)
-                    raw.Add(line.Point + offset);
+                {
+                    raw.Add(toWindow.Transform(line.Point));
+                }
                 else if (segment is PolyLineSegment poly)
-                    foreach (var p in poly.Points)
-                        raw.Add(p + offset);
+                {
+                    var pts = poly.Points;
+                    int pCount = pts.Count;
+                    for (int i = 0; i < pCount; i++)
+                        raw.Add(toWindow.Transform(pts[i]));
+                }
             }
             if (raw.Count > 1 && (raw[^1] - raw[0]).Length < 1e-3)
                 raw.RemoveAt(raw.Count - 1);
@@ -315,9 +336,14 @@ internal sealed class InkyLook : ISpaceLook
             if (perimeter < 1)
                 return null;
 
-            int count = Math.Max(12, (int)Math.Round(perimeter / SampleSpacing));
+            double spacing = draft ? SampleSpacing * 2 : SampleSpacing;
+            int rawCount = Math.Max(12, (int)Math.Round(perimeter / spacing));
+            int count = draft ? Math.Clamp((rawCount + 127) & ~127, 128, 384) : rawCount;
+            var contour = reuse ?? new Contour();
+            contour.Reserve(Headroom.Wanted(count, room), count);
+            contour._count = count;
             double step = perimeter / count;
-            var points = new Point[count];
+            var points = contour._points;
             int seg = 0;
             double segStart = 0;
             double segLength = (raw[1] - raw[0]).Length;
@@ -336,7 +362,7 @@ internal sealed class InkyLook : ISpaceLook
                 points[k] = a + (b - a) * u;
             }
 
-            var normals = new Vector[count];
+            var normals = contour._normals;
             const int span = 2;
             for (int k = 0; k < count; k++)
             {
@@ -346,17 +372,41 @@ internal sealed class InkyLook : ISpaceLook
                 tangent.Normalize();
                 normals[k] = new Vector(-tangent.Y, tangent.X);
             }
-            return new Contour(points, normals, perimeter);
+
+            double Rate(double wavelength) => Math.Tau * Math.Max(1, Math.Round(perimeter / wavelength)) / count;
+            contour.ShiftRate1 = Rate(60);
+            contour.ShiftRate2 = Rate(23);
+            contour.WidthRate1 = Rate(140);
+            contour.WidthRate2 = Rate(45);
+            contour.WidthPhase1 = perimeter * 0.618 % Math.Tau;
+            contour.WidthPhase2 = perimeter * 0.377 % Math.Tau;
+            return contour;
+        }
+
+        private void Reserve(int wanted, int count)
+        {
+            if (_points.Length < wanted)
+            {
+                int capacity = _points.Length == 0 ? wanted : Math.Max(wanted, _points.Length + _points.Length / 2);
+                _points = new Point[capacity];
+                _normals = new Vector[capacity];
+            }
+            if (_center.Length != count)
+            {
+                _center = new Vector2[count];
+                _outer = new Vector2[count];
+                _inner = new Vector2[count];
+            }
         }
 
         /// <summary>Adds this outline to the fill (its centre line) and to the ink (a ribbon around it).</summary>
         public void Emit(ID2D1GeometrySink body, ID2D1GeometrySink rim, BoilFrame boil, double time, List<Splash> splashes)
         {
-            int n = Points.Length;
+            int n = _count;
             for (int i = 0; i < n; i++)
             {
-                var p = Points[i];
-                var normal = Normals[i];
+                var p = _points[i];
+                var normal = _normals[i];
                 double shift = ClaudishStyle.BoilAmplitude * (
                         0.6 * Math.Sin(i * ShiftRate1 + boil.Shift1) +
                         0.4 * Math.Sin(i * ShiftRate2 + boil.Shift2))

@@ -111,6 +111,7 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     /// </summary>
     public void RestoreAll()
     {
+        _saves ??= new SaveQueue(store, logger, _dispatcher, SavedRecords);
         foreach (var record in store.Load())
         {
             if (SpaceGeometry.Decode(record).Figures.Count == 0)
@@ -531,12 +532,12 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         if (space.Stretched)
             Reshape(space); // drawn properly where it is before it goes anywhere
         space.Following = false; // it lands when it is dropped or put back, not when it keeps still
-        if (overlay != IntPtr.Zero)
-            space.Window.Lift(overlay);
         space.Moving = true;
         var moving = new MovingSpace(space, space.ToScreen, space.Outline.Bounds);
         space.NotePlacement = space.Window.NotePlacement = moving.PlaceNote;
         space.StrokePlacement = space.Window.StrokePlacement = moving.PlaceStroke;
+        if (overlay != IntPtr.Zero)
+            space.Window.Lift(overlay);
         return moving;
     }
 
@@ -566,11 +567,11 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
                 return;
             var offset = new Vector(toScreen.OffsetX - space.Shown.OffsetX, toScreen.OffsetY - space.Shown.OffsetY);
             space.ToScreen = space.Shown = toScreen;
-            space.Window.Move(SpaceGeometry.Mapped(space.Shape, toScreen), offset, toScreen);
+            space.Window.Move(moving.LiveOutline(toScreen), offset, toScreen);
             return;
         }
         space.ToScreen = space.Shown = toScreen;
-        space.Window.ReshapeLive(SpaceGeometry.Transform(space.Shape, toScreen), toScreen);
+        space.Window.ReshapeLive(moving.LiveOutline(toScreen), toScreen);
     }
 
     /// <summary>
@@ -1131,12 +1132,29 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     /// <summary>A space picked up with Ctrl+Alt+M (see <see cref="PickUp"/>).</summary>
     internal sealed class MovingSpace
     {
+        private readonly MatrixTransform? _liveTransform;
+        private readonly PathGeometry? _liveOutline;
+        private Dictionary<TextNote, Rect>? _noteBounds;
+
         internal MovingSpace(Space space, Matrix before, Rect bounds)
         {
             Space = space;
             Before = before;
             Bounds = Now = bounds;
             CardWidthBefore = space?.Record is { Card: true, Notes: [var note] } ? note.Width : null;
+            if (space is not null)
+            {
+                _liveTransform = new MatrixTransform(before);
+                _liveOutline = new PathGeometry(space.Shape.Figures, space.Shape.FillRule, _liveTransform);
+            }
+        }
+
+        internal Geometry LiveOutline(Matrix toScreen)
+        {
+            if (Space.Record.Card || _liveOutline is null || _liveTransform is null)
+                return SpaceGeometry.Mapped(Space.Shape, toScreen);
+            _liveTransform.Matrix = toScreen;
+            return _liveOutline;
         }
 
         /// <summary>A card's text width when it was picked up, which reshaping reflows (put back if it is put back).</summary>
@@ -1157,9 +1175,15 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
         internal Vector Carried { get; set; }
 
         /// <summary>Where a note of the space is shown now (see <see cref="SpaceManager.PlaceNote"/>).</summary>
-        internal Point PlaceNote(TextNote note) => Space?.Record.Card == true
-            ? Now.TopLeft + new Vector(CardPadding(note.FontSize), CardPadding(note.FontSize)) // a card's text stays inside its margins
-            : SpaceManager.PlaceNote(NoteText.Bounds(note, Before), Bounds, Now, Carried);
+        internal Point PlaceNote(TextNote note)
+        {
+            if (Space?.Record.Card == true)
+                return Now.TopLeft + new Vector(CardPadding(note.FontSize), CardPadding(note.FontSize)); // a card's text stays inside its margins
+            _noteBounds ??= [];
+            if (!_noteBounds.TryGetValue(note, out var box))
+                _noteBounds[note] = box = NoteText.Bounds(note, Before);
+            return SpaceManager.PlaceNote(box, Bounds, Now, Carried);
+        }
 
         /// <summary>
         /// How a stroke of the space is mapped onto the screen now: as it was shown when picked up,

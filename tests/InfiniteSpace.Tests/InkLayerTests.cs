@@ -486,6 +486,42 @@ public class InkLayerTests
     }
 
     [Fact]
+    public void ReshapingWithPushedNotesOverDrawnShapes_MatchesFreshPixels()
+    {
+        Gpu.Run(gpu =>
+        {
+            var record = new SpaceRecord
+            {
+                Strokes =
+                [
+                    new InkStroke { Points = [120, 120, 260, 180, 180, 260, 120, 120], Thickness = 5 },
+                    new InkStroke { Points = [150, 140, 240, 140, 240, 220, 150, 220, 150, 140], Thickness = 3, Color = "#4ECDC4" },
+                ],
+                Notes =
+                [
+                    new TextNote { X = 130, Y = 125, Text = "Heading note", Bold = true },
+                    new TextNote { X = 230, Y = 160, Width = 120, Text = "Edge note pushed inward" },
+                ],
+            };
+            using var reshaped = new InkLayer(gpu, 300, 300, 1, new Point(100, 100), Square(100, 100, 300), Colors.White) { ReshapeRoom = 1.75 };
+            using var fresh = new InkLayer(gpu, 300, 300, 1, new Point(100, 100), Square(100, 100, 300), Colors.White);
+
+            reshaped.Redraw(record);
+            foreach (double pushedX in new[] { 200.0, 175.0, 215.0 })
+            {
+                Point PlaceNote(TextNote n) => n.X > 200 ? new Point(pushedX, n.Y) : new Point(n.X, n.Y);
+                var outline = Square(100, 100, 260);
+                reshaped.SetShape(260, 260, 1, new Point(100, 100), outline);
+                reshaped.Redraw(record, placeNote: PlaceNote);
+                fresh.SetShape(260, 260, 1, new Point(100, 100), outline);
+                fresh.Redraw(record, placeNote: PlaceNote);
+
+                Assert.Equal(fresh.ReadPixels(), reshaped.ReadPixels());
+            }
+        });
+    }
+
+    [Fact]
     public void Union_CoversBothRectangles_AndIgnoresEmpty()
     {
         var a = new Int32Rect(10, 10, 20, 20);

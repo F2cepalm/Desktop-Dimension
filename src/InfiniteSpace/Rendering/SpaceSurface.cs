@@ -41,6 +41,8 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
     private bool _inkDrawnUnclipped;
     private Int2 _inkOffset;
     private bool _inkCropped;
+    private InkLayer? _stagedInk;
+    private Int32Rect _stagedDirty;
 
     public SpaceSurface(GpuCompositor gpu, IntPtr hwnd)
     {
@@ -95,7 +97,21 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
             _artScale = float.NaN;
             _artIsVector = true;
         }
-        Draw(_art, width, height, scale, draw);
+        InkLayer? mergedInk = null;
+        if (_stagedInk is { IsCropped: true } ink && _room > 1 && _backdrop.Surface is null && _frame.Surface is null)
+        {
+            mergedInk = ink;
+            _stagedInk = null;
+            _stagedDirty = Int32Rect.Empty;
+            if (_ink.Clear())
+                _gpu.Invalidate();
+            _inkCropped = false;
+            _inkDrawnRevision = 0;
+            _inkDrawnUnclipped = false;
+            _inkOffset = default;
+        }
+        Draw(_art, width, height, scale, draw, mergedInk);
+        _expandRoom = false;
     }
 
     /// <summary>Draws the still layer under the moving picture, like <see cref="DrawVector"/>.</summary>
@@ -163,8 +179,24 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
                 return;
             _expandRoom = value > _room;
             _room = value;
-            foreach (var layer in new[] { _backdrop, _art, _frame })
-                layer.Room = value;
+            _art.Room = value;
+        }
+    }
+
+    public void StageInk(InkLayer ink, Int32Rect dirty)
+    {
+        _stagedInk = ink;
+        _stagedDirty = dirty;
+    }
+
+    public void FlushInk()
+    {
+        if (_stagedInk is { } ink)
+        {
+            var dirty = _stagedDirty;
+            _stagedInk = null;
+            _stagedDirty = Int32Rect.Empty;
+            ShowInk(ink, dirty);
         }
     }
 
@@ -178,8 +210,6 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
             bool reallocated = _ink.Ensure(_gpu, ink.DrawnWidth, ink.DrawnHeight);
             if (!visible.IsEmpty && (reallocated || !unclipped || _inkDrawnRevision != ink.Revision || !_inkDrawnUnclipped))
             {
-                if (!unclipped)
-                    ink.Prepare();
                 var d2d = _gpu.D2DContext;
                 using (var target = _ink.Surface!.BeginDraw<IDXGISurface>(null, out Int2 surfaceOffset))
                 using (var bitmap = d2d.CreateBitmapFromDxgiSurface(target, new BitmapProperties1(Bgra, 96, 96, BitmapOptions.Target | BitmapOptions.CannotDraw)))
@@ -187,7 +217,7 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
                     d2d.Target = bitmap;
                     d2d.SetDpi(96, 96);
                     d2d.BeginDraw();
-                    ink.ComposeCropped(d2d, new Vector2(surfaceOffset.X, surfaceOffset.Y), unclipped);
+                    ink.ComposeCropped(d2d, new Vector2(surfaceOffset.X, surfaceOffset.Y), visible, unclipped);
                     d2d.EndDraw().CheckError();
                     d2d.Target = null;
                 }
@@ -258,7 +288,7 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
     }
 
     /// <summary>Draws a layer with Direct2D in DIPs (the context runs at the device's DPI).</summary>
-    private void Draw(Layer layer, int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw)
+    private void Draw(Layer layer, int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw, InkLayer? mergedInk = null)
     {
         layer.Ensure(_gpu, width, height);
         var context = _gpu.D2DContext;
@@ -278,6 +308,15 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
             draw(context, _gpu.D2DFactory);
             context.Transform = Matrix3x2.Identity;
             context.PopAxisAlignedClip();
+            if (mergedInk is not null)
+            {
+                mergedInk.GetCroppedPlacement(out Int2 inkOffset, out Int32Rect visible, out bool unclipped);
+                if (!visible.IsEmpty)
+                {
+                    context.SetDpi(96, 96);
+                    mergedInk.ComposeCropped(context, new Vector2(offset.X + inkOffset.X, offset.Y + inkOffset.Y), visible, unclipped, clearFirst: false);
+                }
+            }
             context.EndDraw().CheckError();
             context.Target = null;
         }

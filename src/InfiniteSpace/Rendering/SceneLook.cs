@@ -72,6 +72,9 @@ internal abstract class SceneLook : ISpaceLook
     private Shadow? _castEffect;
     private Shadow? _glowEffect;
     private ID2D1SolidColorBrush? _white;
+    private ID2D1SolidColorBrush? _glowOuter;
+    private ID2D1SolidColorBrush? _glowInner;
+    private ID2D1SolidColorBrush? _lineBrush;
     private ID2D1StrokeStyle? _roundStroke;
     private bool _stillsDirty = true;
     private bool _dirty = true;
@@ -229,6 +232,9 @@ internal abstract class SceneLook : ISpaceLook
         _castEffect?.Dispose();
         _glowEffect?.Dispose();
         _white?.Dispose();
+        _glowOuter?.Dispose();
+        _glowInner?.Dispose();
+        _lineBrush?.Dispose();
         _roundStroke?.Dispose();
         foreach (var gradient in _gradients)
             gradient.Collection.Dispose();
@@ -482,7 +488,7 @@ internal abstract class SceneLook : ISpaceLook
 
     /// <summary>Keeps only what lies on the space (the context must be at the window's transform).</summary>
     private void Cut(ID2D1DeviceContext context) =>
-        context.DrawImage(_mask!, InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
+        context.DrawImage(_mask!, Vector2.Zero, new RawRectF(0, 0, (float)World.Width, (float)World.Height), InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
 
     /// <summary>Paints the still frame: inner shade, cast shadow, glow, then the outline on top.</summary>
     private void PaintFrame(ISpaceCanvas canvas, int width, int height, float scale)
@@ -573,12 +579,12 @@ internal abstract class SceneLook : ISpaceLook
         {
             if (Draft)
             {
-                using var outer = Solid(context, Color.FromArgb((byte)(glowColor.A * 0.35), glowColor.R, glowColor.G, glowColor.B));
-                using var inner = Solid(context, Color.FromArgb((byte)(glowColor.A * 0.65), glowColor.R, glowColor.G, glowColor.B));
+                _glowOuter ??= Solid(context, Color.FromArgb((byte)(glowColor.A * 0.35), glowColor.R, glowColor.G, glowColor.B));
+                _glowInner ??= Solid(context, Color.FromArgb((byte)(glowColor.A * 0.65), glowColor.R, glowColor.G, glowColor.B));
                 var shape = Shape(factory);
                 var round = RoundStroke(factory);
-                context.DrawGeometry(shape, outer, (float)(style.GlowWidth + style.GlowBlur * 2), round);
-                context.DrawGeometry(shape, inner, (float)(style.GlowWidth + style.GlowBlur * 0.6), round);
+                context.DrawGeometry(shape, _glowOuter, (float)(style.GlowWidth + style.GlowBlur * 2), round);
+                context.DrawGeometry(shape, _glowInner, (float)(style.GlowWidth + style.GlowBlur * 0.6), round);
             }
             else
             {
@@ -589,8 +595,8 @@ internal abstract class SceneLook : ISpaceLook
                 DrawEffect(context, _glowEffect, Vector2.Zero);
             }
         }
-        using var line = Solid(context, style.Line);
-        context.DrawGeometry(Shape(factory), line, (float)style.LineWidth, RoundStroke(factory));
+        _lineBrush ??= Solid(context, style.Line);
+        context.DrawGeometry(Shape(factory), _lineBrush, (float)style.LineWidth, RoundStroke(factory));
     }
 
     /// <summary>A gradient's colours on the GPU, and what they were made from.</summary>

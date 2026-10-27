@@ -443,8 +443,14 @@ internal static class Scenarios
         using var bench = new Bench(theme, [Bench.Record(bounds)]);
         var window = bench.Windows[0];
         bench.Spaces.SetTool(Tool.Pen);
-        var timer = new FrameTimer("paint", theme, bench.Gpu);
         Point At(int i) => new(bounds.Left + 40 + i * 2, bounds.Top + 200 + 120 * Math.Sin(i / 20.0));
+        Ui.Mouse(window.Handle, WM_LBUTTONDOWN, At(0));
+        Ui.Mouse(window.Handle, WM_MOUSEMOVE, At(2), leftDown: true);
+        bench.Universe.Tick();
+        Ui.Mouse(window.Handle, WM_LBUTTONUP, At(2));
+        bench.Spaces.Undo(window.Handle);
+        bench.Universe.Tick();
+        var timer = new FrameTimer("paint", theme, bench.Gpu);
         Ui.Mouse(window.Handle, WM_LBUTTONDOWN, At(0));
         for (int i = 1; i < 260; i++)
         {
@@ -491,27 +497,37 @@ internal static class Scenarios
         return [timer.Finish()];
     }
 
-    /// <summary>A space picked up with Ctrl+Alt+M and reshaped by dragging its right arrow back and forth.</summary>
+    /// <summary>A space picked up with Ctrl+Alt+M and reshaped by dragging its right arrow back and forth (both rectangular and freehand-drawn shape outlines with text and drawn shapes).</summary>
     private static IEnumerable<Result> Reshape(string theme, Options options)
     {
         var bounds = new Rect(Bench.X, Bench.Y, 480, 320);
-        using var bench = new Bench(theme, [Bench.Record(bounds)]);
-        var lift = bench.HostWindow(new Rect(Bench.X - 1000, Bench.Y - 1000, 10, 10), topmost: true);
-        var moving = bench.Spaces.PickUp(new Point(bounds.Left + 100, bounds.Top + 100), lift) ?? throw new InvalidOperationException("nothing picked up");
-        var timer = new FrameTimer("reshape", theme, bench.Gpu);
-        var start = moving.Bounds;
-        for (int f = 0; f < 240; f++)
+        Result RunOne(string label, bool drawnOutline, double shrinkBias)
         {
-            var rect = new Rect(start.X, start.Y, start.Width + 120 * Math.Sin(f / 25.0) + 60, start.Height + 20 * Math.Sin(f / 40.0));
-            timer.Frame(() =>
+            using var bench = new Bench(theme, [Bench.Record(bounds, ink: true, drawnOutline: drawnOutline)]);
+            var lift = bench.HostWindow(new Rect(Bench.X - 1000, Bench.Y - 1000, 10, 10), topmost: true);
+            var moving = bench.Spaces.PickUp(new Point(bounds.Left + 100, bounds.Top + 100), lift) ?? throw new InvalidOperationException("nothing picked up");
+            var timer = new FrameTimer(label, theme, bench.Gpu);
+            var start = moving.Bounds;
+            for (int f = 0; f < 240; f++)
             {
-                bench.Spaces.Fit(moving, rect, new Vector());
-                bench.Universe.Tick();
-            });
+                var rect = new Rect(start.X, start.Y, start.Width + 120 * Math.Sin(f / 25.0) + shrinkBias, start.Height + 24 * Math.Sin(f / 40.0));
+                timer.Frame(() =>
+                {
+                    bench.Spaces.Fit(moving, rect, new Vector());
+                    bench.Universe.Tick();
+                });
+            }
+            if (!drawnOutline)
+                options.Picture(bench.Windows[0].Handle, $"reshape-{theme}");
+            bench.Spaces.PutBack(moving);
+            return timer.Finish();
         }
-        options.Picture(bench.Windows[0].Handle, $"reshape-{theme}");
-        bench.Spaces.PutBack(moving);
-        return [timer.Finish()];
+
+        return
+        [
+            RunOne("reshape", drawnOutline: false, shrinkBias: 60),
+            RunOne("reshape: drawn shape + text", drawnOutline: true, shrinkBias: -20),
+        ];
     }
 
     /// <summary>One resize (a wheel notch), then the wobble until it rests: the Dreamy theme's jelly.</summary>

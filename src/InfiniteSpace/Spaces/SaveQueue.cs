@@ -38,8 +38,8 @@ internal sealed class SaveQueue
         _store = store;
         _logger = logger;
         _records = records;
-        _timer = new DispatcherTimer(Quiet, DispatcherPriority.Background, (_, _) => SaveDue(), dispatcher);
-        _timer.Stop();
+        _timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = Quiet };
+        _timer.Tick += (_, _) => SaveDue();
     }
 
     /// <summary>Something changed: it is saved once changes stop for a moment (UI thread).</summary>

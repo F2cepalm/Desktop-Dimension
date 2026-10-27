@@ -24,8 +24,8 @@ internal sealed class DreamRaster
 
     private Rect _world;
     private readonly List<Contour> _contours;
-    private readonly Edge[] _edges;
-    private readonly Crossing[] _crossings;
+    private Edge[] _edges = [];
+    private Crossing[] _crossings = [];
     private List<int> _active = [];
     private readonly List<Burst> _bursts = [];
     private int[] _rowStart = [];   // per row, where its edges start in _sorted (see FillVoid)
@@ -33,8 +33,8 @@ internal sealed class DreamRaster
     private Edge[] _sorted = [];
     private List<int>[] _bandActive = [];       // per band of rows filled side by side (see FillVoid); band 0 uses _active
     private Crossing[][] _bandCrossings = [];   // likewise; band 0 uses _crossings
-    private int[] _pixels;
-    private int[] _next;
+    private int[] _pixels = [];
+    private int[] _next = [];
     private double _time;
 
     /// <param name="outline">Outline in screen DIPs.</param>
@@ -47,36 +47,66 @@ internal sealed class DreamRaster
     /// <param name="room">Room the buffers make beyond this size, on each side (a space picked up to be reshaped).</param>
     public DreamRaster(Geometry outline, Rect world, DreamRaster? recycle = null, double room = 1)
     {
+        if (recycle is not null)
+        {
+            (_pixels, _next, _edges, _crossings, _active, _rowStart, _placed, _sorted, _bandActive, _bandCrossings) =
+                (recycle._pixels, recycle._next, recycle._edges, recycle._crossings, recycle._active, recycle._rowStart, recycle._placed, recycle._sorted, recycle._bandActive, recycle._bandCrossings);
+        }
+        _contours = recycle?._contours ?? [];
+        Reshape(outline, world, room);
+    }
+
+    /// <summary>Updates the raster in-place for a new outline and world rectangle, reusing all internal buffers.</summary>
+    public void Reshape(Geometry outline, Rect world, double room = 1)
+    {
         _world = world;
         Width = Math.Max(1, (int)Math.Round(world.Width / DreamStyle.ArtPixel));
         Height = Math.Max(1, (int)Math.Round(world.Height / DreamStyle.ArtPixel));
         int wanted = (int)Math.Min(int.MaxValue / 2, (long)Headroom.Wanted(Width, room) * Headroom.Wanted(Height, room));
-        _pixels = Buffer(recycle?._pixels, Width * Height, wanted);
-        _next = Buffer(recycle?._next, Width * Height, wanted);
-        if (recycle is not null)
-            (_active, _rowStart, _placed, _sorted, _bandActive, _bandCrossings) = (recycle._active, recycle._rowStart, recycle._placed, recycle._sorted, recycle._bandActive, recycle._bandCrossings);
+        _pixels = Buffer(_pixels.Length > 0 ? _pixels : null, Width * Height, wanted);
+        _next = Buffer(_next.Length > 0 ? _next : null, Width * Height, wanted);
 
         double scale = 1 / DreamStyle.ArtPixel;
-        var toArt = new Matrix(scale, 0, 0, scale, -world.X * scale, -world.Y * scale);
-        var flattened = SpaceGeometry.Flat(outline);
-        _contours = recycle?._contours ?? [];
         int built = 0, edgeCount = 0;
-        foreach (var figure in flattened.Figures)
+        if (Outline2D.IsWarped(outline))
         {
-            if (Contour.Build(figure, toArt, built < _contours.Count ? _contours[built] : null, room) is not { } contour)
-                continue;
-            if (built < _contours.Count)
-                _contours[built] = contour;
-            else
-                _contours.Add(contour);
-            built++;
-            edgeCount += contour.Count;
+            var warped = Outline2D.From(outline, world.TopLeft);
+            foreach (var figure in warped.Figures)
+            {
+                if (Contour.Build(figure, scale, built < _contours.Count ? _contours[built] : null, room) is not { } contour)
+                    continue;
+                if (built < _contours.Count)
+                    _contours[built] = contour;
+                else
+                    _contours.Add(contour);
+                built++;
+                edgeCount += contour.Count;
+            }
+        }
+        else
+        {
+            var flattened = SpaceGeometry.Flat(outline, out var toArt);
+            toArt.Scale(scale, scale);
+            toArt.Translate(-world.X * scale, -world.Y * scale);
+            foreach (var figure in flattened.Figures)
+            {
+                if (Contour.Build(figure, toArt, built < _contours.Count ? _contours[built] : null, room) is not { } contour)
+                    continue;
+                if (built < _contours.Count)
+                    _contours[built] = contour;
+                else
+                    _contours.Add(contour);
+                built++;
+                edgeCount += contour.Count;
+            }
         }
         _contours.RemoveRange(built, _contours.Count - built);
 
         int wantedEdges = Headroom.Wanted(edgeCount, room);
-        _edges = recycle?._edges is { } edges && edges.Length >= wantedEdges ? edges : new Edge[wantedEdges + wantedEdges / 2];
-        _crossings = recycle?._crossings is { } crossings && crossings.Length >= wantedEdges ? crossings : new Crossing[wantedEdges + wantedEdges / 2];
+        if (_edges.Length < wantedEdges)
+            _edges = new Edge[wantedEdges + wantedEdges / 2];
+        if (_crossings.Length < wantedEdges)
+            _crossings = new Crossing[wantedEdges + wantedEdges / 2];
         int wantedRows = Headroom.Wanted(Height, room) + 2;
         if (_rowStart.Length < wantedRows)
             _rowStart = new int[wantedRows + wantedRows / 2];
@@ -90,14 +120,14 @@ internal sealed class DreamRaster
     /// Rasters with at least this many art pixels fill their rows in bands on several threads (a large
     /// space on a slow CPU); smaller ones aren't worth the hand-over. The picture is the same either way.
     /// </summary>
-    internal static int ParallelPixels { get; set; } = 1 << 16;
+    internal static int ParallelPixels { get; set; } = 1 << 18;
 
     private const int MinBandRows = 32;
     private const int MaxBands = 8;
 
-    public int Width { get; }
+    public int Width { get; private set; }
 
-    public int Height { get; }
+    public int Height { get; private set; }
 
     /// <summary>The last rendered frame: premultiplied BGRA, row-major, <see cref="Width"/> per row (it may run on past the last row).</summary>
     public int[] Pixels => _pixels;
@@ -508,6 +538,18 @@ internal sealed class DreamRaster
 
         public double[] Y { get; private set; } = [];
 
+        public static Contour? Build(System.Numerics.Vector2[] figure, double scale, Contour? reuse, double room = 1)
+        {
+            var raw = t_raw ??= [];
+            raw.Clear();
+            for (int i = 0; i < figure.Length; i++)
+            {
+                var p = figure[i];
+                raw.Add(new Point(p.X * scale, p.Y * scale));
+            }
+            return BuildFromRaw(raw, reuse, room);
+        }
+
         /// <param name="reuse">A contour of the raster being replaced, to build into (its arrays are reused if big enough).</param>
         /// <returns>null for a figure too small to have an outline.</returns>
         public static Contour? Build(PathFigure figure, Matrix toArt, Contour? reuse, double room = 1)
@@ -518,11 +560,22 @@ internal sealed class DreamRaster
             foreach (var segment in figure.Segments)
             {
                 if (segment is LineSegment line)
+                {
                     raw.Add(toArt.Transform(line.Point));
+                }
                 else if (segment is PolyLineSegment poly)
-                    foreach (var p in poly.Points)
-                        raw.Add(toArt.Transform(p));
+                {
+                    var pts = poly.Points;
+                    int count = pts.Count;
+                    for (int i = 0; i < count; i++)
+                        raw.Add(toArt.Transform(pts[i]));
+                }
             }
+            return BuildFromRaw(raw, reuse, room);
+        }
+
+        private static Contour? BuildFromRaw(List<Point> raw, Contour? reuse, double room)
+        {
             if (raw.Count > 1 && (raw[^1] - raw[0]).Length < 1e-3)
                 raw.RemoveAt(raw.Count - 1);
             if (raw.Count < 3)

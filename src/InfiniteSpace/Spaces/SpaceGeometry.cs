@@ -95,6 +95,21 @@ internal static class SpaceGeometry
         return outline.GetFlattenedPathGeometry(Tolerance, ToleranceType.Absolute);
     }
 
+    /// <summary>
+    /// Like <see cref="Flat(Geometry)"/>, but keeps a <see cref="PathGeometry"/>'s transform separate
+    /// (as from <see cref="Mapped"/>) so its points need not be copied first.
+    /// </summary>
+    public static PathGeometry Flat(Geometry outline, out Matrix transform)
+    {
+        if (outline is PathGeometry path && IsFlat(path))
+        {
+            transform = path.Transform is { } t ? t.Value : Matrix.Identity;
+            return path;
+        }
+        transform = Matrix.Identity;
+        return outline.GetFlattenedPathGeometry(Tolerance, ToleranceType.Absolute);
+    }
+
     private static bool IsFlat(PathGeometry path)
     {
         foreach (var figure in path.Figures)

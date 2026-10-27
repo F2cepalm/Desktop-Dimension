@@ -70,6 +70,7 @@ internal sealed class Universe : IDisposable
     private readonly List<(SpaceWindow Window, int FramesLeft)> _retiring = [];
     private readonly List<IFramePart> _parts = [];
     private readonly List<SpaceWindow> _drawingAhead = [];
+    private readonly List<IntPtr> _showing = [];
     private readonly FrameClock _frames;
     private double _lastTick = double.NegativeInfinity;
     private double _lastFrame = double.NegativeInfinity;
@@ -128,6 +129,7 @@ internal sealed class Universe : IDisposable
         _spaces.Add(space);
         space.Universe = this;
         _nothingSeen = false; // a new space is in sight until a look says otherwise
+        Hurry();
         space.Track();
         space.RenderFrame(new FrameState(_clock.Elapsed.TotalSeconds, _look));
         Gpu.Commit();
@@ -232,7 +234,7 @@ internal sealed class Universe : IDisposable
         if (interactive)
             _hotUntil = now + HotHold;
         CheckPower(now);
-        if (!interactive && now >= _nextSightCheck)
+        if (!interactive && now >= _hotUntil && now >= _nextSightCheck)
         {
             _nextSightCheck = now + SightInterval;
             CheckSight();
@@ -277,13 +279,13 @@ internal sealed class Universe : IDisposable
     private void CheckSight()
     {
         bool dark = _screen.Dark;
-        var showing = new List<IntPtr>(_spaces.Count);
+        _showing.Clear();
         foreach (var space in _spaces)
         {
             if (space.IsShowing)
-                showing.Add(space.Handle);
+                _showing.Add(space.Handle);
         }
-        var covered = dark ? null : Occlusion.Covered(showing);
+        var covered = dark ? null : Occlusion.Covered(_showing);
         int next = 0;
         bool anySeen = false;
         foreach (var space in _spaces)

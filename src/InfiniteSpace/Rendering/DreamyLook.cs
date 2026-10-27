@@ -22,7 +22,10 @@ internal sealed class DreamyLook : ISpaceLook
         _world = world;
         double room = _expand ? _room : 1;
         _expand = false;
-        _raster = new DreamRaster(outline, world, recycle: _raster, room);
+        if (_raster is null)
+            _raster = new DreamRaster(outline, world, room: room);
+        else
+            _raster.Reshape(outline, world, room);
         _renderedAt = double.NaN;
     }
 

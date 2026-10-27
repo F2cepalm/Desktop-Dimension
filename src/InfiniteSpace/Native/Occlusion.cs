@@ -9,14 +9,22 @@ namespace InfiniteSpace.Native;
 /// </remarks>
 internal static class Occlusion
 {
+    [ThreadStatic]
+    private static Dictionary<IntPtr, int>? t_index;
+
+    [ThreadStatic]
+    private static bool[]? t_covered;
+
     /// <param name="windows">This app's top-level windows to look at.</param>
     /// <returns>For each, whether other windows above it cover all of it.</returns>
     public static bool[] Covered(IReadOnlyList<IntPtr> windows)
     {
-        var covered = new bool[windows.Count];
         if (windows.Count == 0)
-            return covered;
-        var index = new Dictionary<IntPtr, int>(windows.Count);
+            return [];
+        var covered = t_covered is { } c && c.Length >= windows.Count ? c : (t_covered = new bool[windows.Count]);
+        Array.Clear(covered, 0, windows.Count);
+        var index = t_index ??= new Dictionary<IntPtr, int>(windows.Count);
+        index.Clear();
         for (int i = 0; i < windows.Count; i++)
             index[windows[i]] = i;
 
