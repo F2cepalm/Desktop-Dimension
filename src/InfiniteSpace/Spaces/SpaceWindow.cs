@@ -659,11 +659,11 @@ internal sealed partial class SpaceWindow : IDisposable
     }
 
     /// <summary>Room made for a reshape, on each side, while the space is picked up (see <see cref="SpaceSurface.ReshapeRoom"/>).</summary>
-    private const double ReshapeRoom = 1.5;
+    private const double ReshapeRoom = 1.75;
 
     /// <summary>
-    /// Makes room, or lets it go, for reshaping the space: its surfaces, bitmaps and buffers are made half
-    /// as big again on each side now, on the press, rather than grown during the first frames of a drag.
+    /// Makes room, or lets it go, for reshaping the space: its surfaces, bitmaps and buffers are made
+    /// bigger on each side now, on the press, rather than grown during the first frames of a drag.
     /// </summary>
     private void MakeReshapeRoom(bool room)
     {
@@ -687,6 +687,10 @@ internal sealed partial class SpaceWindow : IDisposable
             {
                 _needsPresent = true;
             }
+        }
+        else if (_ink is not null && _ink.IsCropped)
+        {
+            RedrawInk();
         }
     }
 
@@ -1078,7 +1082,11 @@ internal sealed partial class SpaceWindow : IDisposable
     {
         if (_ink is null)
         {
-            _ink = new InkLayer(_gpu, _size.Width, _size.Height, Dpi.Scale, _world.TopLeft, _outline, ThemeInk) { ThemeAccent = Themes.AccentOf(_theme) };
+            _ink = new InkLayer(_gpu, _size.Width, _size.Height, Dpi.Scale, _world.TopLeft, _outline, ThemeInk)
+            {
+                ThemeAccent = Themes.AccentOf(_theme),
+                ReshapeRoom = _surface.ReshapeRoom,
+            };
             DrawInk();
         }
         return _ink;

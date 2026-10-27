@@ -3,6 +3,7 @@ using System.Windows.Media;
 using InfiniteSpace.Spaces;
 using Vortice.Direct2D1;
 using Color4 = Vortice.Mathematics.Color4;
+using Int2 = Vortice.Mathematics.Int2;
 using Matrix3x2 = System.Numerics.Matrix3x2;
 using RawRectF = Vortice.RawRectF;
 using SizeI = Vortice.Mathematics.SizeI;
@@ -61,7 +62,11 @@ internal sealed class InkLayer : IDisposable
     private Outline2D _outline = Outline2D.Empty;
     private bool _maskStale = true;
     private bool _inkDrawn;
+    private bool _cropped;
     private Point _drawnOrigin;
+    private int _drawnWidth = 1;
+    private int _drawnHeight = 1;
+    private int _inkRevision;
     private double _drawnScale;
     private Color _drawnThemeInk;
     private Color _drawnThemeAccent;
@@ -97,6 +102,18 @@ internal sealed class InkLayer : IDisposable
 
     public Int32Rect Bounds => new(0, 0, Width, Height);
 
+    /// <summary>Whether <see cref="_ink"/> currently holds a tight bounding box of the ink rather than the whole window.</summary>
+    public bool IsCropped => _cropped && _inkDrawn && _pending.Count == 0;
+
+    /// <summary>Version of the drawn ink bitmap; changes each time <see cref="_ink"/> is redrawn.</summary>
+    public int Revision => _inkRevision;
+
+    /// <summary>Device pixel width of the drawn ink when <see cref="IsCropped"/> is true.</summary>
+    public int DrawnWidth => _drawnWidth;
+
+    /// <summary>Device pixel height of the drawn ink when <see cref="IsCropped"/> is true.</summary>
+    public int DrawnHeight => _drawnHeight;
+
     /// <summary>
     /// The space's new shape: the layer's size, where it is on screen, and the outline ink is clipped
     /// to. What was drawn is stale until the next <see cref="Redraw"/>.
@@ -108,17 +125,23 @@ internal sealed class InkLayer : IDisposable
     /// <param name="outline">The space's outline (screen DIPs); ink outside it is not shown.</param>
     public void SetShape(int width, int height, double scale, Point origin, Geometry outline)
     {
-        Width = Math.Max(1, width);
-        Height = Math.Max(1, height);
+        int max = (int)Math.Min(16384, _gpu.D2DContext.MaximumBitmapSize);
+        Width = Math.Clamp(width, 1, max);
+        Height = Math.Clamp(height, 1, max);
         _scale = scale;
         _origin = origin;
         if (!_inkDrawn)
+        {
             _drawnOrigin = origin;
+            _drawnWidth = Width;
+            _drawnHeight = Height;
+        }
         _outline = Outline2D.From(outline, origin);
         _maskStale = true;
         _pending.Clear();
         _stillWithout = null; // the still picture of a drag is at the old shape
-        EnsureCapacity();
+        if (_room <= 1 || _ink is null)
+            EnsureCapacity(_cropped ? _drawnWidth : Width, _cropped ? _drawnHeight : Height);
     }
 
     /// <summary>
@@ -147,11 +170,16 @@ internal sealed class InkLayer : IDisposable
         _pending.Clear();
         if (moving is not null)
         {
+            _cropped = false;
             _drawnOrigin = _origin;
+            _drawnWidth = Width;
+            _drawnHeight = Height;
+            EnsureCapacity(Width, Height);
             var stillWorld = World(_origin);
             if (moving == _stillWithout || PaintStill(record, toScreen, skip, placeNote, opacity, placeStroke, stillWorld, moving))
             {
                 _inkDrawn = false;
+                _inkRevision++;
                 var target = Begin(_ink!);
                 target.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
                 target.DrawImage(_still!, Vector2.Zero, new RawRectF(0, 0, Width, Height), InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
@@ -165,16 +193,35 @@ internal sealed class InkLayer : IDisposable
         }
 
         ReleaseStill();
-        if (moving is null && adornments is null && CanKeepInk(record, toScreen, skip, placeNote, opacity, placeStroke))
+        bool wantCropped = _room > 1 && moving is null && adornments is null;
+        if (moving is null && adornments is null && _cropped == wantCropped && CanKeepInk(record, toScreen, skip, placeNote, opacity, placeStroke))
             return Bounds;
 
-        int padX = _room > 1 && moving is null && adornments is null ? Math.Max(0, (_capacityWidth - Width) / 2) : 0;
-        int padY = _room > 1 && moving is null && adornments is null ? Math.Max(0, (_capacityHeight - Height) / 2) : 0;
-        _drawnOrigin = new Point(_origin.X - padX / _scale, _origin.Y - padY / _scale);
+        if (wantCropped)
+        {
+            var inkBounds = MeasureInkBounds(record, toScreen, skip, placeNote, opacity, placeStroke);
+            int ox = (int)Math.Floor((inkBounds.Left - _origin.X) * _scale);
+            int oy = (int)Math.Floor((inkBounds.Top - _origin.Y) * _scale);
+            int max = (int)Math.Min(16384, _gpu.D2DContext.MaximumBitmapSize);
+            _drawnOrigin = new Point(_origin.X + ox / _scale, _origin.Y + oy / _scale);
+            _drawnWidth = Math.Clamp((int)Math.Ceiling((inkBounds.Right - _drawnOrigin.X) * _scale), 1, max);
+            _drawnHeight = Math.Clamp((int)Math.Ceiling((inkBounds.Bottom - _drawnOrigin.Y) * _scale), 1, max);
+            _cropped = true;
+            _maskStale = true;
+        }
+        else
+        {
+            _drawnOrigin = _origin;
+            _drawnWidth = Width;
+            _drawnHeight = Height;
+            _cropped = false;
+            _maskStale = true;
+        }
+        EnsureCapacity(_drawnWidth, _drawnHeight);
         var world = World(_drawnOrigin);
         _generation++;
         var context = Begin(_ink!);
-        context.PushAxisAlignedClip(new RawRectF(0, 0, _capacityWidth, _capacityHeight), AntialiasMode.Aliased);
+        context.PushAxisAlignedClip(new RawRectF(0, 0, _drawnWidth, _drawnHeight), AntialiasMode.Aliased);
         context.Clear(new Color4(0, 0, 0, 0));
         bool fading = DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, null);
         if (adornments is not null)
@@ -182,11 +229,61 @@ internal sealed class InkLayer : IDisposable
         context.PopAxisAlignedClip();
         End(context);
         ForgetUnused();
+        _inkRevision++;
         if (moving is null && adornments is null && !fading)
             RecordDrawnInk(record, toScreen, skip, placeNote, opacity, placeStroke);
         else
+        {
             _inkDrawn = false;
+            _cropped = false;
+        }
         return Bounds;
+    }
+
+    private Rect MeasureInkBounds(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke)
+    {
+        var bounds = Rect.Empty;
+        foreach (var stroke in record.Strokes)
+        {
+            var points = stroke.Points;
+            if (points.Length < 2)
+                continue;
+            var m = placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor);
+            double reach = stroke.Thickness / 2 + 4;
+            var box = points.Length < 4
+                ? new Rect(m.Transform(new Point(points[0], points[1])), new Size(0, 0))
+                : Rect.Transform(stroke.Box, m);
+            box.Inflate(reach, reach);
+            bounds.Union(box);
+        }
+        foreach (var note in record.Notes)
+        {
+            if (note == skip || note.Text.Length == 0)
+                continue;
+            float alpha = opacity?.Invoke(note) ?? 1;
+            if (alpha <= 0)
+                continue;
+            var at = placeNote?.Invoke(note) ?? toScreen.Transform(new Point(note.X, note.Y));
+            if (note.File is { } file)
+            {
+                var document = Document(note);
+                double width = document.Width, height = Math.Max(document.HeaderHeight, file.Height);
+                double pad = note.FontSize * 0.6 + 4;
+                bounds.Union(new Rect(at.X - pad, at.Y - pad, width + 2 * pad, height + 2 * pad));
+            }
+            else
+            {
+                var cached = NoteLayout(note);
+                var metrics = cached.Layout.Metrics;
+                double pad = Math.Max(8, note.FontSize * 0.5);
+                double width = Math.Max(metrics.WidthIncludingTrailingWhitespace, metrics.Width) + 2 * pad;
+                double height = metrics.Height + 2 * pad;
+                bounds.Union(new Rect(at.X + metrics.Left - pad, at.Y + metrics.Top - pad, Math.Max(1, width), Math.Max(1, height)));
+            }
+        }
+        if (bounds.IsEmpty)
+            return new Rect(_origin.X, _origin.Y, 1 / _scale, 1 / _scale);
+        return bounds;
     }
 
     /// <summary>
@@ -199,7 +296,9 @@ internal sealed class InkLayer : IDisposable
             return false;
         double dx = (_origin.X - _drawnOrigin.X) * _scale, dy = (_origin.Y - _drawnOrigin.Y) * _scale;
         int sx = (int)Math.Round(dx), sy = (int)Math.Round(dy);
-        if (Math.Abs(dx - sx) > 1e-2 || Math.Abs(dy - sy) > 1e-2 || sx < 0 || sy < 0 || sx + Width > _capacityWidth || sy + Height > _capacityHeight)
+        if (Math.Abs(dx - sx) > 1e-2 || Math.Abs(dy - sy) > 1e-2)
+            return false;
+        if (!_cropped && (sx < 0 || sy < 0 || sx + Width > _capacityWidth || sy + Height > _capacityHeight))
             return false;
         if (record.Strokes.Count != _drawnStrokes.Count)
             return false;
@@ -322,7 +421,7 @@ internal sealed class InkLayer : IDisposable
                 context.Transform = Matrix3x2.Identity;
                 context.PushLayer(new LayerParameters1
                 {
-                    ContentBounds = new RawRectF(0, 0, Width, Height),
+                    ContentBounds = new RawRectF(0, 0, _drawnWidth, _drawnHeight),
                     MaskTransform = Matrix3x2.Identity,
                     Opacity = alpha,
                 }, null!);
@@ -383,13 +482,65 @@ internal sealed class InkLayer : IDisposable
         context.Transform = Matrix3x2.CreateTranslation(at.X - area.X, at.Y - area.Y);
         var rect = new RawRectF(area.X, area.Y, area.X + area.Width, area.Y + area.Height);
         context.PushAxisAlignedClip(rect, AntialiasMode.Aliased);
-        context.Clear(new Color4(0, 0, 0, 0));
-        var corner = new Vector2(area.X, area.Y);
         int sx = (int)Math.Round((_origin.X - _drawnOrigin.X) * _scale);
         int sy = (int)Math.Round((_origin.Y - _drawnOrigin.Y) * _scale);
-        var inkRect = new RawRectF(area.X + sx, area.Y + sy, area.X + area.Width + sx, area.Y + area.Height + sy);
-        context.DrawImage(_ink!, corner, inkRect, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
-        context.DrawImage(_mask!, corner, rect, InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
+        if (_cropped)
+        {
+            context.Clear(new Color4(0, 0, 0, 0));
+            int x0 = Math.Max(area.X, -sx), y0 = Math.Max(area.Y, -sy);
+            int x1 = Math.Min(area.X + area.Width, _drawnWidth - sx), y1 = Math.Min(area.Y + area.Height, _drawnHeight - sy);
+            if (x1 > x0 && y1 > y0)
+            {
+                var subCorner = new Vector2(x0, y0);
+                var subInk = new RawRectF(x0 + sx, y0 + sy, x1 + sx, y1 + sy);
+                context.DrawImage(_ink!, subCorner, subInk, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+                context.DrawImage(_mask!, subCorner, subInk, InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
+            }
+        }
+        else
+        {
+            var corner = new Vector2(area.X, area.Y);
+            var inkRect = new RawRectF(area.X + sx, area.Y + sy, area.X + area.Width + sx, area.Y + area.Height + sy);
+            context.DrawImage(_ink!, corner, inkRect, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+            context.DrawImage(_mask!, corner, rect, InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
+        }
+        context.PopAxisAlignedClip();
+        context.Transform = Matrix3x2.Identity;
+    }
+
+    /// <summary>
+    /// Where the cropped ink bitmap sits in the window (device pixels), the part of it inside the
+    /// window, and whether that part lies wholly inside the space's outline (so no mask is needed).
+    /// </summary>
+    public void GetCroppedPlacement(out Int2 offset, out Int32Rect visible, out bool unclipped)
+    {
+        int ox = (int)Math.Round((_drawnOrigin.X - _origin.X) * _scale);
+        int oy = (int)Math.Round((_drawnOrigin.Y - _origin.Y) * _scale);
+        offset = new Int2(ox, oy);
+        int vx0 = Math.Clamp(-ox, 0, _drawnWidth);
+        int vy0 = Math.Clamp(-oy, 0, _drawnHeight);
+        int vx1 = Math.Clamp(Width - ox, 0, _drawnWidth);
+        int vy1 = Math.Clamp(Height - oy, 0, _drawnHeight);
+        if (vx1 <= vx0 || vy1 <= vy0)
+        {
+            visible = Int32Rect.Empty;
+            unclipped = true;
+            return;
+        }
+        visible = new Int32Rect(vx0, vy0, vx1 - vx0, vy1 - vy0);
+        var visibleDip = new Rect((ox + vx0) / _scale, (oy + vy0) / _scale, (vx1 - vx0) / _scale, (vy1 - vy0) / _scale);
+        unclipped = _outline.Covers(visibleDip);
+    }
+
+    /// <summary>Copies the cropped ink bitmap into the target at <paramref name="at"/>, masked only when <paramref name="unclipped"/> is false.</summary>
+    public void ComposeCropped(ID2D1DeviceContext context, Vector2 at, bool unclipped)
+    {
+        context.Transform = Matrix3x2.CreateTranslation(at.X, at.Y);
+        var rect = new RawRectF(0, 0, _drawnWidth, _drawnHeight);
+        context.PushAxisAlignedClip(rect, AntialiasMode.Aliased);
+        context.DrawImage(_ink!, Vector2.Zero, rect, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+        if (!unclipped)
+            context.DrawImage(_mask!, Vector2.Zero, rect, InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
         context.PopAxisAlignedClip();
         context.Transform = Matrix3x2.Identity;
     }
@@ -496,23 +647,33 @@ internal sealed class InkLayer : IDisposable
         }
     }
 
-    /// <summary>Makes sure the bitmaps hold the layer's size; they are only made anew when too small (or far too big).</summary>
-    private void EnsureCapacity()
+    /// <summary>Makes sure the bitmaps hold the given pixel size; they are only made anew when too small (or far too big).</summary>
+    private void EnsureCapacity(int targetWidth, int targetHeight)
     {
-        double room = _expand ? _room : 1;
+        double room = _expand && !_cropped ? _room : 1;
         _expand = false;
-        int wantedWidth = Headroom.Wanted(Width, room), wantedHeight = Headroom.Wanted(Height, room);
+        int wantedWidth = Headroom.Wanted(targetWidth, room), wantedHeight = Headroom.Wanted(targetHeight, room);
         bool fits = _ink is not null && _capacityWidth >= wantedWidth && _capacityHeight >= wantedHeight;
         bool wasteful = _room <= 1 && (long)_capacityWidth * _capacityHeight > 4L * Math.Max(Step * Step, (long)wantedWidth * wantedHeight);
         bool oversized = _trim && (_capacityWidth > Headroom.Size(wantedWidth, 0) || _capacityHeight > Headroom.Size(wantedHeight, 0));
         _trim = false;
         if (fits && !wasteful && !oversized)
             return;
+        if (!fits && _room > 1 && !_cropped)
+        {
+            wantedWidth = Headroom.Wanted(targetWidth, _room);
+            wantedHeight = Headroom.Wanted(targetHeight, _room);
+        }
         int max = (int)Math.Min(16384, _gpu.D2DContext.MaximumBitmapSize);
         _capacityWidth = Math.Min(max, oversized ? Headroom.Size(wantedWidth, 0) : Headroom.Size(wantedWidth, _capacityWidth));
         _capacityHeight = Math.Min(max, oversized ? Headroom.Size(wantedHeight, 0) : Headroom.Size(wantedHeight, _capacityHeight));
-        Width = Math.Min(Width, _capacityWidth);
-        Height = Math.Min(Height, _capacityHeight);
+        if (!_cropped)
+        {
+            Width = Math.Min(Width, _capacityWidth);
+            Height = Math.Min(Height, _capacityHeight);
+        }
+        _drawnWidth = Math.Min(_drawnWidth, _capacityWidth);
+        _drawnHeight = Math.Min(_drawnHeight, _capacityHeight);
         _ink?.Dispose();
         _mask?.Dispose();
         ReleaseStill(); // made again at the new size if a drag goes on
@@ -529,13 +690,16 @@ internal sealed class InkLayer : IDisposable
         if (!_maskStale)
             return;
         _maskStale = false;
+        int maskWidth = _cropped ? _drawnWidth : Width;
+        int maskHeight = _cropped ? _drawnHeight : Height;
+        var maskOrigin = _cropped ? _drawnOrigin : _origin;
         var context = Begin(_mask!);
-        context.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
+        context.PushAxisAlignedClip(new RawRectF(0, 0, maskWidth, maskHeight), AntialiasMode.Aliased);
         context.Clear(new Color4(0, 0, 0, 0));
         if (_outline.Figures.Length > 0)
         {
             using var shape = _outline.ToPath(_gpu.D2DFactory);
-            context.Transform = Matrix3x2.CreateScale((float)_scale);
+            context.Transform = Matrix3x2.CreateTranslation((float)(_origin.X - maskOrigin.X), (float)(_origin.Y - maskOrigin.Y)) * Matrix3x2.CreateScale((float)_scale);
             context.FillGeometry(shape, Brush(context, Colors.White));
         }
         context.PopAxisAlignedClip();
@@ -582,9 +746,9 @@ internal sealed class InkLayer : IDisposable
             var box = stroke.Box;
             double reach = thickness / 2 + 2;
             if (box.Right + toScreen.OffsetX + reach < _drawnOrigin.X ||
-                box.Left + toScreen.OffsetX - reach > _drawnOrigin.X + _capacityWidth / _scale ||
+                box.Left + toScreen.OffsetX - reach > _drawnOrigin.X + _drawnWidth / _scale ||
                 box.Bottom + toScreen.OffsetY + reach < _drawnOrigin.Y ||
-                box.Top + toScreen.OffsetY - reach > _drawnOrigin.Y + _capacityHeight / _scale)
+                box.Top + toScreen.OffsetY - reach > _drawnOrigin.Y + _drawnHeight / _scale)
                 return;
 
             // Only moved: the cached geometry as it is, tessellated once for this scale and pen width.
@@ -610,6 +774,13 @@ internal sealed class InkLayer : IDisposable
             DrawFile(context, note, at, world);
             return;
         }
+        var cached = NoteLayout(note);
+        context.Transform = Matrix3x2.CreateTranslation((float)at.X, (float)at.Y) * world;
+        context.DrawTextLayout(Vector2.Zero, cached.Layout, Brush(context, InkColors.Resolve(note.Color, ThemeInk)), DrawTextOptions.EnableColorFont);
+    }
+
+    private CachedNote NoteLayout(TextNote note)
+    {
         if (!_notes.TryGetValue(note, out var cached) || !cached.Matches(note))
         {
             cached?.Layout.Dispose();
@@ -617,8 +788,7 @@ internal sealed class InkLayer : IDisposable
             _notes[note] = cached;
         }
         cached.Generation = _generation;
-        context.Transform = Matrix3x2.CreateTranslation((float)at.X, (float)at.Y) * world;
-        context.DrawTextLayout(Vector2.Zero, cached.Layout, Brush(context, InkColors.Resolve(note.Color, ThemeInk)), DrawTextOptions.EnableColorFont);
+        return cached;
     }
 
     /// <summary>

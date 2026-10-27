@@ -59,6 +59,33 @@ internal readonly record struct Outline2D(Vector2[][] Figures, FillMode FillMode
         return path;
     }
 
+    /// <summary>Whether <paramref name="box"/> (in DIPs from the same origin) lies wholly inside the outline.</summary>
+    public bool Covers(Rect box)
+    {
+        if (Figures.Length == 0 || box.IsEmpty)
+            return false;
+        float left = (float)box.Left, top = (float)box.Top, right = (float)box.Right, bottom = (float)box.Bottom;
+        float cx = (left + right) * 0.5f, cy = (top + bottom) * 0.5f;
+        int winding = 0;
+        foreach (var figure in Figures)
+        {
+            for (int i = 0; i < figure.Length; i++)
+            {
+                var a = figure[i];
+                var b = figure[i + 1 < figure.Length ? i + 1 : 0];
+                if (!((a.X <= left && b.X <= left) || (a.X >= right && b.X >= right) || (a.Y <= top && b.Y <= top) || (a.Y >= bottom && b.Y >= bottom)))
+                    return false;
+                if ((a.Y <= cy && b.Y > cy) || (b.Y <= cy && a.Y > cy))
+                {
+                    float x = a.X + (cy - a.Y) * (b.X - a.X) / (b.Y - a.Y);
+                    if (x > cx)
+                        winding += a.Y < b.Y ? 1 : -1;
+                }
+            }
+        }
+        return FillMode == FillMode.Alternate ? (winding & 1) != 0 : winding != 0;
+    }
+
     private static Vector2[] Figure(PathFigure figure, Point origin)
     {
         int count = 1;

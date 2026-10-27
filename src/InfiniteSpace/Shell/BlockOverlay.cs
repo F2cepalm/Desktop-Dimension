@@ -51,6 +51,7 @@ internal sealed class BlockOverlay : GpuOverlay
     private readonly OverlaySprite _size;
     private OverlayPicture? _sizePicture;
     private string _sizeText = "";
+    private bool _sizeDirty;
     private SpaceWindow? _preview;
     private Rect _previewScreen;
     private Rect _rect;
@@ -88,6 +89,16 @@ internal sealed class BlockOverlay : GpuOverlay
 
     /// <summary>The block in screen DIPs (for tests).</summary>
     internal Rect Block => new(_rect.X + Origin.X, _rect.Y + Origin.Y, _rect.Width, _rect.Height);
+
+    public override bool WantsFrame => _sizeDirty;
+
+    public override void RenderFrame(FrameState frame)
+    {
+        if (!_sizeDirty)
+            return;
+        _sizeDirty = false;
+        _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, _sizeText, 12);
+    }
 
     protected override void OnShown()
     {
@@ -264,7 +275,10 @@ internal sealed class BlockOverlay : GpuOverlay
         if (text != _sizeText)
         {
             _sizeText = text;
-            _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, text, 12);
+            if (_sizePicture is null)
+                _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, text, 12);
+            else
+                _sizeDirty = true;
         }
         _size.MoveTo(new Point(_rect.X, _rect.Bottom + 12)); // clear of the rim's wobble
         _size.Shown = true;

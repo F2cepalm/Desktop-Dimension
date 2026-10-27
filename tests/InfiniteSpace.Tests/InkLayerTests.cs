@@ -455,6 +455,37 @@ public class InkLayerTests
     }
 
     [Fact]
+    public void ReshapingWithRoom_KeepsTheInk_AndMatchesUncroppedPixels()
+    {
+        Gpu.Run(gpu =>
+        {
+            var record = new SpaceRecord
+            {
+                Strokes = [new InkStroke { Points = [120, 120, 220, 180, 180, 240], Thickness = 5 }],
+                Notes = [new TextNote { X = 140, Y = 130, Text = "Kept across reshapes" }],
+            };
+            using var reshaped = new InkLayer(gpu, 300, 300, 1, new Point(100, 100), Square(100, 100, 300), Colors.White) { ReshapeRoom = 1.75 };
+            using var fresh = new InkLayer(gpu, 300, 300, 1, new Point(100, 100), Square(100, 100, 300), Colors.White);
+
+            reshaped.Redraw(record);
+            int revision = reshaped.Revision;
+            Assert.True(reshaped.IsCropped);
+
+            foreach (var (origin, size) in new[] { (new Point(60, 60), 500), (new Point(20, 20), 900), (new Point(110, 110), 90) })
+            {
+                var outline = Square(origin.X, origin.Y, size);
+                reshaped.SetShape(size, size, 1, origin, outline);
+                reshaped.Redraw(record);
+                fresh.SetShape(size, size, 1, origin, outline);
+                fresh.Redraw(record);
+
+                Assert.Equal(revision, reshaped.Revision);
+                Assert.Equal(fresh.ReadPixels(), reshaped.ReadPixels());
+            }
+        });
+    }
+
+    [Fact]
     public void Union_CoversBothRectangles_AndIgnoresEmpty()
     {
         var a = new Int32Rect(10, 10, 20, 20);

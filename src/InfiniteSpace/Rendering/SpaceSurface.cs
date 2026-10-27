@@ -37,6 +37,10 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
     private readonly Layer _ink;
     private float _artScale = float.NaN;
     private bool _artIsVector;
+    private int _inkDrawnRevision;
+    private bool _inkDrawnUnclipped;
+    private Int2 _inkOffset;
+    private bool _inkCropped;
 
     public SpaceSurface(GpuCompositor gpu, IntPtr hwnd)
     {
@@ -159,7 +163,7 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
                 return;
             _expandRoom = value > _room;
             _room = value;
-            foreach (var layer in new[] { _backdrop, _art, _frame, _ink })
+            foreach (var layer in new[] { _backdrop, _art, _frame })
                 layer.Room = value;
         }
     }
@@ -168,8 +172,56 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
     /// <remarks>A new size copies everything, whatever <paramref name="dirty"/> says.</remarks>
     public void ShowInk(InkLayer ink, Int32Rect dirty)
     {
-        if (_ink.Ensure(_gpu, ink.Width, ink.Height))
-            dirty = ink.Bounds; // a new surface must be drawn whole first
+        if (ink.IsCropped)
+        {
+            ink.GetCroppedPlacement(out Int2 offset, out Int32Rect visible, out bool unclipped);
+            bool reallocated = _ink.Ensure(_gpu, ink.DrawnWidth, ink.DrawnHeight);
+            if (!visible.IsEmpty && (reallocated || !unclipped || _inkDrawnRevision != ink.Revision || !_inkDrawnUnclipped))
+            {
+                if (!unclipped)
+                    ink.Prepare();
+                var d2d = _gpu.D2DContext;
+                using (var target = _ink.Surface!.BeginDraw<IDXGISurface>(null, out Int2 surfaceOffset))
+                using (var bitmap = d2d.CreateBitmapFromDxgiSurface(target, new BitmapProperties1(Bgra, 96, 96, BitmapOptions.Target | BitmapOptions.CannotDraw)))
+                {
+                    d2d.Target = bitmap;
+                    d2d.SetDpi(96, 96);
+                    d2d.BeginDraw();
+                    ink.ComposeCropped(d2d, new Vector2(surfaceOffset.X, surfaceOffset.Y), unclipped);
+                    d2d.EndDraw().CheckError();
+                    d2d.Target = null;
+                }
+                _ink.Surface.EndDraw();
+                _inkDrawnRevision = ink.Revision;
+                _inkDrawnUnclipped = unclipped;
+            }
+            if (_inkOffset != offset || !_inkCropped)
+            {
+                _inkOffset = offset;
+                _ink.Visual.SetOffsetX(offset.X);
+                _ink.Visual.SetOffsetY(offset.Y);
+            }
+            _ink.Visual.SetClip(new RawRectF(visible.X, visible.Y, visible.X + visible.Width, visible.Y + visible.Height));
+            _inkCropped = true;
+            _gpu.Invalidate();
+            return;
+        }
+
+        bool wasCropped = _inkCropped;
+        _inkCropped = false;
+        _inkDrawnRevision = 0;
+        _inkDrawnUnclipped = false;
+        if (_inkOffset != default || wasCropped)
+        {
+            _inkOffset = default;
+            _ink.Visual.SetOffsetX(0);
+            _ink.Visual.SetOffsetY(0);
+        }
+        if (_ink.Ensure(_gpu, ink.Width, ink.Height) || wasCropped)
+        {
+            dirty = ink.Bounds; // a new surface (or coming back from cropped mode) must be drawn whole first
+            _ink.Visual.SetClip(new RawRectF(0, 0, ink.Width, ink.Height));
+        }
         int x0 = Math.Max(0, dirty.X), y0 = Math.Max(0, dirty.Y);
         int x1 = Math.Min(ink.Width, dirty.X + dirty.Width), y1 = Math.Min(ink.Height, dirty.Y + dirty.Height);
         if (x1 <= x0 || y1 <= y0)
@@ -197,6 +249,10 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
 
     public void HideInk()
     {
+        _inkCropped = false;
+        _inkDrawnRevision = 0;
+        _inkDrawnUnclipped = false;
+        _inkOffset = default;
         if (_ink.Clear())
             _gpu.Invalidate();
     }
@@ -316,6 +372,11 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
                     gpu.Invalidate();
                 }
                 return false;
+            }
+            if (!fits && _room > 1)
+            {
+                wantedWidth = Headroom.Wanted(width, _room);
+                wantedHeight = Headroom.Wanted(height, _room);
             }
             Surface?.Dispose();
             _capacity = oversized

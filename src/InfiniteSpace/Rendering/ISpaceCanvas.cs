@@ -27,6 +27,11 @@ internal interface ISpaceCanvas
     /// <summary>Takes the moving picture away (until it is drawn again).</summary>
     void HideArt();
 
+    /// <summary>Takes the still backdrop and frame away (until they are drawn again).</summary>
+    void HideStills()
+    {
+    }
+
     /// <summary>
     /// Paints an offscreen picture at device resolution, for sprites, textures and effect inputs drawn
     /// later from a draw callback. The caller owns the bitmap.

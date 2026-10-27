@@ -232,7 +232,7 @@ internal sealed class Universe : IDisposable
         if (interactive)
             _hotUntil = now + HotHold;
         CheckPower(now);
-        if (now >= _nextSightCheck)
+        if (!interactive && now >= _nextSightCheck)
         {
             _nextSightCheck = now + SightInterval;
             CheckSight();

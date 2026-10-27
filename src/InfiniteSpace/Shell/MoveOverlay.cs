@@ -53,6 +53,7 @@ internal sealed class MoveOverlay : GpuOverlay
     private readonly OverlaySprite _size;
     private OverlayPicture? _sizePicture;
     private string _sizeText = "";
+    private bool _sizeDirty;
     private SpaceManager.MovingSpace? _moving;
     private Rect _rect;   // the space's bounds on screen (DIPs)
     private BlockGrip _drag;
@@ -88,6 +89,16 @@ internal sealed class MoveOverlay : GpuOverlay
 
     /// <summary>The space being moved, if one was picked up (for tests).</summary>
     internal SpaceManager.MovingSpace? Moving => _moving;
+
+    public override bool WantsFrame => _sizeDirty;
+
+    public override void RenderFrame(FrameState frame)
+    {
+        if (!_sizeDirty || _moving is null)
+            return;
+        _sizeDirty = false;
+        _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, _sizeText, 12);
+    }
 
     protected override void OnShown() => PickUp(_last); // picking up floats the space just under this overlay
 
@@ -277,7 +288,10 @@ internal sealed class MoveOverlay : GpuOverlay
         if (text != _sizeText)
         {
             _sizeText = text;
-            _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, text, 12);
+            if (_sizePicture is null)
+                _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, text, 12);
+            else
+                _sizeDirty = true;
         }
         _size.MoveTo(new Point(box.X, box.Bottom + ArrowHandle.Size / 2 + 4)); // clear of the arrows
         _size.Shown = shown;

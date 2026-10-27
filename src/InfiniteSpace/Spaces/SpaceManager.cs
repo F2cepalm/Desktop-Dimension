@@ -897,6 +897,8 @@ internal sealed partial class SpaceManager(SpaceStore store, Universe universe, 
     /// <summary>Every couple of seconds: remember app windows' current titles, and look for kept spaces' windows.</summary>
     private void Lookout()
     {
+        if (_spaces.Any(s => s.Moving || s.Window.IsReshaping))
+            return;
         foreach (var space in _spaces)
         {
             if (space.Record.Host is not { } host || space.Window.Host == IntPtr.Zero)
