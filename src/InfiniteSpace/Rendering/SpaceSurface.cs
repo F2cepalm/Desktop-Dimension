@@ -74,6 +74,7 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
             _artScale = scale;
         }
         Upload(_art.Surface!, pixels, width, new Int32Rect(0, 0, width, height));
+        _expandRoom = false;
     }
 
     /// <summary>
@@ -98,8 +99,11 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
         Draw(_backdrop, width, height, scale, draw);
 
     /// <summary>Draws the still layer over the moving picture (and under the ink), like <see cref="DrawVector"/>.</summary>
-    public void DrawFrame(int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw) =>
+    public void DrawFrame(int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw)
+    {
         Draw(_frame, width, height, scale, draw);
+        _expandRoom = false;
+    }
 
     /// <summary>
     /// Places everything shown (all layers) elsewhere in the window, on the GPU and without redrawing:
@@ -136,9 +140,10 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
         _gpu.Paint(width, height, scale, draw);
 
     public void Repaint(ref ID2D1Bitmap1? bitmap, int width, int height, float scale, Action<ID2D1DeviceContext, ID2D1Factory1> draw) =>
-        _gpu.Repaint(ref bitmap, width, height, scale, draw, _room);
+        _gpu.Repaint(ref bitmap, width, height, scale, draw, _expandRoom ? _room : 1);
 
     private double _room = 1;
+    private bool _expandRoom;
 
     /// <summary>
     /// Room surfaces make beyond their size: more than 1 while the space is picked up to be reshaped, so
@@ -152,6 +157,7 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
         {
             if (value == _room)
                 return;
+            _expandRoom = value > _room;
             _room = value;
             foreach (var layer in new[] { _backdrop, _art, _frame, _ink })
                 layer.Room = value;
@@ -274,6 +280,7 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
         private (int Width, int Height) _size;
         private (int Width, int Height) _capacity;
         private double _room = 1;
+        private bool _expand;
         private bool _trim;
 
         /// <summary>Room to make beyond the size (see <see cref="SpaceSurface.ReshapeRoom"/>); less than before shrinks it next time.</summary>
@@ -282,6 +289,7 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
             get => _room;
             set
             {
+                _expand = value > _room;
                 _trim |= value < _room;
                 _room = value;
             }
@@ -291,9 +299,11 @@ internal sealed class SpaceSurface : ISpaceCanvas, IDisposable
         /// <returns>Whether it is new (and must be drawn whole).</returns>
         public bool Ensure(GpuCompositor gpu, int width, int height)
         {
-            int wantedWidth = Headroom.Wanted(width, _room), wantedHeight = Headroom.Wanted(height, _room);
+            double room = _expand ? _room : 1;
+            _expand = false;
+            int wantedWidth = Headroom.Wanted(width, room), wantedHeight = Headroom.Wanted(height, room);
             bool fits = Surface is not null && wantedWidth <= _capacity.Width && wantedHeight <= _capacity.Height;
-            bool wasteful = (long)_capacity.Width * _capacity.Height > 4L * Math.Max(Step * Step, (long)wantedWidth * wantedHeight);
+            bool wasteful = _room <= 1 && (long)_capacity.Width * _capacity.Height > 4L * Math.Max(Step * Step, (long)wantedWidth * wantedHeight);
             // Room made for a reshape that is over: back to the size, once.
             bool oversized = _trim && (_capacity.Width > Headroom.Size(wantedWidth, 0) || _capacity.Height > Headroom.Size(wantedHeight, 0));
             _trim = false;

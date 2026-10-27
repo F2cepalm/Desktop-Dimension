@@ -177,14 +177,24 @@ internal sealed class GpuCompositor : IDisposable
         if (!fits || wasteful)
         {
             bitmap?.Dispose();
-            bitmap = context.CreateBitmap(new SizeI(Headroom.Size(wantedWidth, size.Width), Headroom.Size(wantedHeight, size.Height)), IntPtr.Zero, 0,
+            size = new SizeI(Headroom.Size(wantedWidth, size.Width), Headroom.Size(wantedHeight, size.Height));
+            bitmap = context.CreateBitmap(size, IntPtr.Zero, 0,
                 new BitmapProperties1(Bgra, dpi, dpi, BitmapOptions.Target));
         }
         context.Target = bitmap;
         context.SetDpi(dpi, dpi);
         context.BeginDraw();
         context.Transform = Matrix3x2.Identity;
-        context.Clear(new Color4(0, 0, 0, 0));
+        if (!fits || wasteful)
+        {
+            context.Clear(new Color4(0, 0, 0, 0));
+        }
+        else
+        {
+            context.PushAxisAlignedClip(new Vortice.RawRectF(0, 0, Math.Min(size.Width, width + 32) / scale, Math.Min(size.Height, height + 32) / scale), AntialiasMode.Aliased);
+            context.Clear(new Color4(0, 0, 0, 0));
+            context.PopAxisAlignedClip();
+        }
         context.PushAxisAlignedClip(new Vortice.RawRectF(0, 0, width / scale, height / scale), AntialiasMode.Aliased);
         draw(context, D2DFactory);
         context.Transform = Matrix3x2.Identity;

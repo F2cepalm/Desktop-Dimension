@@ -26,7 +26,7 @@ internal sealed class DreamRaster
     private readonly List<Contour> _contours;
     private readonly Edge[] _edges;
     private readonly Crossing[] _crossings;
-    private readonly List<int> _active = [];
+    private List<int> _active = [];
     private readonly List<Burst> _bursts = [];
     private int[] _rowStart = [];   // per row, where its edges start in _sorted (see FillVoid)
     private int[] _placed = [];
@@ -54,7 +54,7 @@ internal sealed class DreamRaster
         _pixels = Buffer(recycle?._pixels, Width * Height, wanted);
         _next = Buffer(recycle?._next, Width * Height, wanted);
         if (recycle is not null)
-            (_rowStart, _placed, _sorted, _bandActive, _bandCrossings) = (recycle._rowStart, recycle._placed, recycle._sorted, recycle._bandActive, recycle._bandCrossings);
+            (_active, _rowStart, _placed, _sorted, _bandActive, _bandCrossings) = (recycle._active, recycle._rowStart, recycle._placed, recycle._sorted, recycle._bandActive, recycle._bandCrossings);
 
         double scale = 1 / DreamStyle.ArtPixel;
         var toArt = new Matrix(scale, 0, 0, scale, -world.X * scale, -world.Y * scale);
@@ -63,7 +63,7 @@ internal sealed class DreamRaster
         int built = 0, edgeCount = 0;
         foreach (var figure in flattened.Figures)
         {
-            if (Contour.Build(figure, toArt, built < _contours.Count ? _contours[built] : null) is not { } contour)
+            if (Contour.Build(figure, toArt, built < _contours.Count ? _contours[built] : null, room) is not { } contour)
                 continue;
             if (built < _contours.Count)
                 _contours[built] = contour;
@@ -74,8 +74,16 @@ internal sealed class DreamRaster
         }
         _contours.RemoveRange(built, _contours.Count - built);
 
-        _edges = recycle?._edges is { } edges && edges.Length >= edgeCount ? edges : new Edge[edgeCount + edgeCount / 2];
-        _crossings = recycle?._crossings is { } crossings && crossings.Length >= edgeCount ? crossings : new Crossing[edgeCount + edgeCount / 2];
+        int wantedEdges = Headroom.Wanted(edgeCount, room);
+        _edges = recycle?._edges is { } edges && edges.Length >= wantedEdges ? edges : new Edge[wantedEdges + wantedEdges / 2];
+        _crossings = recycle?._crossings is { } crossings && crossings.Length >= wantedEdges ? crossings : new Crossing[wantedEdges + wantedEdges / 2];
+        int wantedRows = Headroom.Wanted(Height, room) + 2;
+        if (_rowStart.Length < wantedRows)
+            _rowStart = new int[wantedRows + wantedRows / 2];
+        if (_placed.Length < wantedRows)
+            _placed = new int[_rowStart.Length];
+        if (_sorted.Length < wantedEdges)
+            _sorted = new Edge[_edges.Length];
     }
 
     /// <summary>
@@ -104,7 +112,7 @@ internal sealed class DreamRaster
         if (old is null)
             return new int[wanted];
         if (old.Length < wanted)
-            return new int[Math.Max(wanted, count + count / 2)];
+            return new int[Math.Max(wanted, Math.Max(old.Length + old.Length / 2, count + count / 2))];
         Array.Clear(old, 0, count);
         return old;
     }
@@ -190,7 +198,7 @@ internal sealed class DreamRaster
         // Edges go into buckets by the first row whose centre they reach (a counting sort: no
         // comparisons, and the buckets are all the row loop needs).
         if (_rowStart.Length < Height + 2)
-            _rowStart = new int[Height + 2];
+            _rowStart = new int[Height + Height / 2 + 2];
         var rowStart = _rowStart.AsSpan(0, Height + 2);
         rowStart.Clear();
         int count = 0;
@@ -216,7 +224,7 @@ internal sealed class DreamRaster
         if (_sorted.Length < count)
             _sorted = new Edge[_edges.Length];
         if (_placed.Length < rowStart.Length)
-            _placed = new int[rowStart.Length];
+            _placed = new int[_rowStart.Length];
         rowStart.CopyTo(_placed);
         for (int i = 0; i < count; i++)
             _sorted[_placed[FirstRow(_edges[i].YMin)]++] = _edges[i];
@@ -502,7 +510,7 @@ internal sealed class DreamRaster
 
         /// <param name="reuse">A contour of the raster being replaced, to build into (its arrays are reused if big enough).</param>
         /// <returns>null for a figure too small to have an outline.</returns>
-        public static Contour? Build(PathFigure figure, Matrix toArt, Contour? reuse)
+        public static Contour? Build(PathFigure figure, Matrix toArt, Contour? reuse, double room = 1)
         {
             var raw = t_raw ??= [];
             raw.Clear();
@@ -529,7 +537,7 @@ internal sealed class DreamRaster
 
             int count = Math.Max(8, (int)Math.Round(perimeter / Spacing));
             var contour = reuse ?? new Contour();
-            contour.Reserve(count);
+            contour.Reserve(Headroom.Wanted(count, room));
             var points = contour.Points;
             double step = perimeter / count;
             int seg = 0;

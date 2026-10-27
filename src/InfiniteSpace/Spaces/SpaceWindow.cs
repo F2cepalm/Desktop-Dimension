@@ -131,6 +131,11 @@ internal sealed partial class SpaceWindow : IDisposable
 
         _gpu = gpu;
         _surface = new SpaceSurface(gpu, _source.Handle);
+        if (previewUnder != IntPtr.Zero)
+        {
+            _surface.ReshapeRoom = ReshapeRoom;
+            _look.ReshapeRoom = ReshapeRoom;
+        }
         SetShape(outline);
     }
 
@@ -347,7 +352,7 @@ internal sealed partial class SpaceWindow : IDisposable
         {
             var shown = _jelly.Shown;
             toScreen.Append(HostFrames.Map(_jelly.Rest, shown)); // the outline wobbles (paint and text are placed on their own)
-            outline = SpaceGeometry.Warp(outline, p => _jelly.Map(p, shown), JellyStep);
+            outline = SpaceGeometry.Warp(outline, _jelly.Mapper(shown), JellyStep);
         }
         else
         {
@@ -672,7 +677,16 @@ internal sealed partial class SpaceWindow : IDisposable
         if (room)
         {
             Lay(_outline); // made with the room right away: the next frame draws into them
-            _needsPresent = true;
+            if (_shown && !_hidden)
+            {
+                _look.Render(_lastFrame);
+                Present();
+                ShowAt(_world);
+            }
+            else
+            {
+                _needsPresent = true;
+            }
         }
     }
 
@@ -818,9 +832,11 @@ internal sealed partial class SpaceWindow : IDisposable
         if (!_shown)
         {
             Win32.ShowWindow(_source.Handle, Win32.SW_SHOWNOACTIVATE);
+            _shown = true;
             const uint keep = Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE;
             if (_previewUnder != IntPtr.Zero)
             {
+                ShowAt(_world);
                 // Into the topmost band, then just below the overlay that drives the preview.
                 Win32.SetWindowPos(_source.Handle, Win32.HWND_TOPMOST, 0, 0, 0, 0, keep);
                 Win32.SetWindowPos(_source.Handle, _previewUnder, 0, 0, 0, 0, keep);
@@ -829,7 +845,6 @@ internal sealed partial class SpaceWindow : IDisposable
             {
                 Settle();
             }
-            _shown = true;
         }
     }
 

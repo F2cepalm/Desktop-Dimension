@@ -64,8 +64,10 @@ internal abstract class SceneLook : ISpaceLook
     private ID2D1PathGeometry? _shape;
     private ID2D1Bitmap1? _mask;
     private ID2D1Bitmap1? _outside; // the frame's pictures: kept, and painted over for each new shape
+    private ID2D1Bitmap1? _shade;
     private ID2D1Bitmap1? _cast;
     private ID2D1Bitmap1? _rim;
+    private Rect _frameArea = Rect.Empty;
     private Shadow? _shadeEffect;
     private Shadow? _castEffect;
     private Shadow? _glowEffect;
@@ -114,9 +116,9 @@ internal abstract class SceneLook : ISpaceLook
         World = world;
         _bounds = outline.Bounds;
         Area = new Rect(_bounds.X - world.X, _bounds.Y - world.Y, _bounds.Width, _bounds.Height);
-        var flattened = SpaceGeometry.Flat(outline);
-        _fillMode = flattened.FillRule == FillRule.EvenOdd ? FillMode.Alternate : FillMode.Winding;
-        _figures = [.. flattened.Figures.Select(f => Figure(f, world.TopLeft)).Where(f => f.Length >= 3)];
+        var flat = Outline2D.From(outline, world.TopLeft);
+        _fillMode = flat.FillMode;
+        _figures = flat.Figures;
         _shape?.Dispose();
         _shape = null;
         _stillsDirty = true;
@@ -195,6 +197,7 @@ internal abstract class SceneLook : ISpaceLook
         _shape?.Dispose();
         _mask?.Dispose();
         _outside?.Dispose();
+        _shade?.Dispose();
         _cast?.Dispose();
         _rim?.Dispose();
         _shadeEffect?.Dispose();
@@ -460,34 +463,46 @@ internal abstract class SceneLook : ISpaceLook
     private void PaintFrame(ISpaceCanvas canvas, int width, int height, float scale)
     {
         // The pictures and effects are kept from shape to shape (a space being reshaped gets a new
-        // shape every frame): they are painted over, not made anew.
+        // shape every frame): they are painted over, not made anew. While the shape changes under the
+        // hand (Draft), the blurred shade and cast shadow from the last rest shape are stretched to it.
         var style = Frame;
-        float pad = 0;
-        if (style.Shade is not null)
+        bool paintBlur = !Draft || _frameArea.IsEmpty || (style.Shade is not null && _shade is null) || (style.Cast is not null && _cast is null);
+        if (paintBlur)
         {
-            // Everything but the space, with room around it so the blur doesn't fade at the window's edges.
-            int padPixels = (int)Math.Ceiling(style.ShadeBlur * 3 * scale);
-            pad = padPixels / scale;
-            float w = (width + 2 * padPixels) / scale, h = (height + 2 * padPixels) / scale;
-            canvas.Repaint(ref _outside, width + 2 * padPixels, height + 2 * padPixels, scale, (context, _) =>
+            if (style.Shade is { } shadeColor)
             {
-                context.FillRectangle(new RawRectF(0, 0, w, h), White(context));
-                context.DrawImage(_mask!, new Vector2(pad, pad), null, InterpolationMode.NearestNeighbor, CompositeMode.DestinationOut);
-            });
-        }
-        if (style.Cast is { } castColor)
-        {
-            canvas.Repaint(ref _cast, width, height, scale, (context, _) =>
+                // Everything but the space, with room around it so the blur doesn't fade at the window's edges.
+                int padPixels = (int)Math.Ceiling(style.ShadeBlur * 3 * scale);
+                float pad = padPixels / scale;
+                float w = (width + 2 * padPixels) / scale, h = (height + 2 * padPixels) / scale;
+                canvas.Repaint(ref _outside, width + 2 * padPixels, height + 2 * padPixels, scale, (context, _) =>
+                {
+                    context.FillRectangle(new RawRectF(0, 0, w, h), White(context));
+                    context.DrawImage(_mask!, new Vector2(pad, pad), null, InterpolationMode.NearestNeighbor, CompositeMode.DestinationOut);
+                });
+                canvas.Repaint(ref _shade, width, height, scale, (context, _) =>
+                {
+                    _shadeEffect ??= new Shadow(context) { Optimization = ShadowOptimization.Speed };
+                    _shadeEffect.BlurStandardDeviation = (float)style.ShadeBlur;
+                    _shadeEffect.Color = ToVector4(shadeColor);
+                    _shadeEffect.SetInput(0, _outside!, true);
+                    DrawEffect(context, _shadeEffect, new Vector2(-pad, -pad));
+                });
+            }
+            if (style.Cast is { } castColor)
             {
-                _castEffect ??= new Shadow(context);
-                _castEffect.BlurStandardDeviation = (float)style.CastBlur;
-                _castEffect.Color = ToVector4(castColor);
-                _castEffect.SetInput(0, _mask!, true);
-                DrawEffect(context, _castEffect, new Vector2((float)style.CastOffset.X, (float)style.CastOffset.Y));
-                context.DrawImage(_mask!, InterpolationMode.NearestNeighbor, CompositeMode.DestinationOut);
-            });
+                canvas.Repaint(ref _cast, width, height, scale, (context, _) =>
+                {
+                    _castEffect ??= new Shadow(context) { Optimization = ShadowOptimization.Speed };
+                    _castEffect.BlurStandardDeviation = (float)style.CastBlur;
+                    _castEffect.Color = ToVector4(castColor);
+                    _castEffect.SetInput(0, _mask!, true);
+                    DrawEffect(context, _castEffect, new Vector2((float)style.CastOffset.X, (float)style.CastOffset.Y));
+                });
+            }
+            _frameArea = Area;
         }
-        if (style.Glow is not null)
+        if (!Draft && style.Glow is not null)
         {
             canvas.Repaint(ref _rim, width, height, scale, (context, factory) =>
                 context.DrawGeometry(Shape(factory), White(context), (float)style.GlowWidth, RoundStroke(factory)));
@@ -495,24 +510,47 @@ internal abstract class SceneLook : ISpaceLook
 
         canvas.DrawFrame(width, height, scale, (context, factory) =>
         {
-            if (style.Shade is { } shadeColor)
+            var origin = context.Transform;
+            var a = Area;
+            var stretch = a == _frameArea || _frameArea.IsEmpty
+                ? origin
+                : Matrix3x2.CreateTranslation((float)-_frameArea.X, (float)-_frameArea.Y) *
+                  Matrix3x2.CreateScale((float)(a.Width / _frameArea.Width), (float)(a.Height / _frameArea.Height)) *
+                  Matrix3x2.CreateTranslation((float)a.X, (float)a.Y) * origin;
+
+            if (style.Shade is not null)
             {
-                _shadeEffect ??= new Shadow(context);
-                _shadeEffect.BlurStandardDeviation = (float)style.ShadeBlur;
-                _shadeEffect.Color = ToVector4(shadeColor);
-                _shadeEffect.SetInput(0, _outside!, true);
-                DrawEffect(context, _shadeEffect, new Vector2(-pad, -pad));
+                context.Transform = stretch;
+                context.DrawImage(_shade!, InterpolationMode.Linear, CompositeMode.SourceOver);
+                context.Transform = origin;
                 Cut(context); // the shade only falls inside
             }
             if (style.Cast is not null)
-                context.DrawImage(_cast!, InterpolationMode.NearestNeighbor, CompositeMode.SourceOver);
+            {
+                context.Transform = stretch;
+                context.DrawImage(_cast!, InterpolationMode.Linear, CompositeMode.SourceOver);
+                context.Transform = origin;
+                context.DrawImage(_mask!, InterpolationMode.NearestNeighbor, CompositeMode.DestinationOut);
+            }
             if (style.Glow is { } glowColor)
             {
-                _glowEffect ??= new Shadow(context);
-                _glowEffect.BlurStandardDeviation = (float)style.GlowBlur;
-                _glowEffect.Color = ToVector4(glowColor);
-                _glowEffect.SetInput(0, _rim!, true);
-                DrawEffect(context, _glowEffect, Vector2.Zero);
+                if (Draft)
+                {
+                    using var outer = Solid(context, Color.FromArgb((byte)(glowColor.A * 0.35), glowColor.R, glowColor.G, glowColor.B));
+                    using var inner = Solid(context, Color.FromArgb((byte)(glowColor.A * 0.65), glowColor.R, glowColor.G, glowColor.B));
+                    var shape = Shape(factory);
+                    var round = RoundStroke(factory);
+                    context.DrawGeometry(shape, outer, (float)(style.GlowWidth + style.GlowBlur * 2), round);
+                    context.DrawGeometry(shape, inner, (float)(style.GlowWidth + style.GlowBlur * 0.6), round);
+                }
+                else
+                {
+                    _glowEffect ??= new Shadow(context) { Optimization = ShadowOptimization.Speed };
+                    _glowEffect.BlurStandardDeviation = (float)style.GlowBlur;
+                    _glowEffect.Color = ToVector4(glowColor);
+                    _glowEffect.SetInput(0, _rim!, true);
+                    DrawEffect(context, _glowEffect, Vector2.Zero);
+                }
             }
             using var line = Solid(context, style.Line);
             context.DrawGeometry(Shape(factory), line, (float)style.LineWidth, RoundStroke(factory));

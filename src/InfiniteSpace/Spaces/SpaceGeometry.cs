@@ -23,7 +23,9 @@ internal static class SpaceGeometry
         for (int i = 1; i < points.Count; i++)
             rest.Add(points[i] + offset);
 
-        geometry.Figures.Add(new PathFigure(points[0] + offset, [new PolyLineSegment(rest, isStroked: true)], closed: true));
+        var figure = new PathFigure { StartPoint = points[0] + offset, IsClosed = true };
+        figure.Segments.Add(new PolyLineSegment { Points = rest, IsStroked = true });
+        geometry.Figures.Add(figure);
         return geometry;
     }
 
@@ -39,7 +41,10 @@ internal static class SpaceGeometry
         for (int i = 1; i < points.Count; i++)
             rest.Add(points[i] + offset);
 
-        var path = new PathGeometry([new PathFigure(points[0] + offset, [new PolyLineSegment(rest, isStroked: true)], closed: false)]);
+        var figure = new PathFigure { StartPoint = points[0] + offset, IsClosed = false };
+        figure.Segments.Add(new PolyLineSegment { Points = rest, IsStroked = true });
+        var path = new PathGeometry();
+        path.Figures.Add(figure);
         var pen = new Pen(Brushes.Black, radius * 2)
         {
             StartLineCap = PenLineCap.Round,
@@ -111,7 +116,10 @@ internal static class SpaceGeometry
         var geometry = new PathGeometry { FillRule = outline.FillRule };
         foreach (var figure in outline.Figures)
         {
-            var points = new PointCollection();
+            int count = 0;
+            foreach (var segment in figure.Segments)
+                count += segment is PolyLineSegment poly ? poly.Points.Count : 1;
+            var points = new PointCollection(count);
             foreach (var segment in figure.Segments)
             {
                 if (segment is LineSegment line)
@@ -120,11 +128,16 @@ internal static class SpaceGeometry
                     foreach (var p in poly.Points)
                         points.Add(m.Transform(p));
             }
-            geometry.Figures.Add(new PathFigure(m.Transform(figure.StartPoint), [new PolyLineSegment(points, isStroked: true)], figure.IsClosed));
+            var mapped = new PathFigure { StartPoint = m.Transform(figure.StartPoint), IsClosed = figure.IsClosed };
+            mapped.Segments.Add(new PolyLineSegment { Points = points, IsStroked = true });
+            geometry.Figures.Add(mapped);
         }
         geometry.Freeze();
         return geometry;
     }
+
+    [ThreadStatic]
+    private static List<Point>? t_corners;
 
     /// <summary>
     /// An outline with every point moved by <paramref name="map"/>, which need not keep lines straight
@@ -134,7 +147,7 @@ internal static class SpaceGeometry
     {
         var flat = outline as PathGeometry ?? outline.GetFlattenedPathGeometry(Tolerance, ToleranceType.Absolute);
         var geometry = new PathGeometry { FillRule = flat.FillRule };
-        var corners = new List<Point>();
+        var corners = t_corners ??= [];
         foreach (var figure in flat.Figures)
         {
             corners.Clear();
@@ -144,12 +157,22 @@ internal static class SpaceGeometry
                 if (segment is LineSegment line)
                     corners.Add(line.Point);
                 else if (segment is PolyLineSegment poly)
-                    corners.AddRange(poly.Points);
+                    foreach (var p in poly.Points)
+                        corners.Add(p);
                 else
                     return Warp(outline.GetFlattenedPathGeometry(Tolerance, ToleranceType.Absolute), map, step); // curves: flattened first
             }
 
-            var points = new PointCollection(corners.Count);
+            int total = Math.Max(0, corners.Count - 1);
+            for (int i = 0; i < corners.Count; i++)
+            {
+                var from = corners[i];
+                var to = corners[(i + 1) % corners.Count];
+                int pieces = (int)Math.Ceiling((to - from).Length / step);
+                if (pieces > 1)
+                    total += pieces - 1;
+            }
+            var points = new PointCollection(total);
             for (int i = 0; i < corners.Count; i++)
             {
                 var from = corners[i];
@@ -160,7 +183,9 @@ internal static class SpaceGeometry
                 for (int k = 1; k < pieces; k++)
                     points.Add(map(from + (to - from) * ((double)k / pieces)));
             }
-            geometry.Figures.Add(new PathFigure(map(figure.StartPoint), [new PolyLineSegment(points, isStroked: true)], closed: true));
+            var warped = new PathFigure { StartPoint = map(figure.StartPoint), IsClosed = true };
+            warped.Segments.Add(new PolyLineSegment { Points = points, IsStroked = true });
+            geometry.Figures.Add(warped);
         }
         geometry.Freeze();
         return geometry;

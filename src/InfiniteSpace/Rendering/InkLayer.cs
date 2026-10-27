@@ -44,10 +44,14 @@ internal sealed class InkLayer : IDisposable
     private readonly List<InkStroke> _unusedStrokes = [];
     private readonly List<TextNote> _unusedNotes = [];
     private readonly List<Segment> _pending = [];
+    private readonly List<DrawnStroke> _drawnStrokes = [];
+    private readonly List<DrawnNote> _drawnNotes = [];
     private ID2D1Bitmap1? _ink;
     private ID2D1Bitmap1? _mask;
     private ID2D1Bitmap1? _still;             // the ink that stays put while a selection is dragged (see Redraw)
     private Func<IInk, bool>? _stillWithout;  // what moves over it; null when there is no still picture
+    private ID2D1DeviceContext1? _context1;
+    private IntPtr _context1Of;
     private ID2D1StrokeStyle? _round;
     private ID2D1StrokeStyle? _dashed;
     private int _capacityWidth;
@@ -56,6 +60,12 @@ internal sealed class InkLayer : IDisposable
     private double _scale = 1;
     private Outline2D _outline = Outline2D.Empty;
     private bool _maskStale = true;
+    private bool _inkDrawn;
+    private Point _drawnOrigin;
+    private double _drawnScale;
+    private Color _drawnThemeInk;
+    private Color _drawnThemeAccent;
+    private TextNote? _drawnSkip;
     private int _generation;
     private bool _disposed;
 
@@ -102,6 +112,8 @@ internal sealed class InkLayer : IDisposable
         Height = Math.Max(1, height);
         _scale = scale;
         _origin = origin;
+        if (!_inkDrawn)
+            _drawnOrigin = origin;
         _outline = Outline2D.From(outline, origin);
         _maskStale = true;
         _pending.Clear();
@@ -113,7 +125,11 @@ internal sealed class InkLayer : IDisposable
     /// The space moved on screen with everything on it: the pixels stay as they are, only the screen
     /// position of pixel (0,0) changes.
     /// </summary>
-    public void MoveOrigin(Vector offset) => _origin += offset;
+    public void MoveOrigin(Vector offset)
+    {
+        _origin += offset;
+        _drawnOrigin += offset;
+    }
 
     /// <summary>Redraws all strokes and notes of the space, mapped onto the screen by <paramref name="toScreen"/>.</summary>
     /// <param name="skip">A note left out (it is being edited in a text box, which shows it instead).</param>
@@ -129,32 +145,116 @@ internal sealed class InkLayer : IDisposable
     public Int32Rect Redraw(SpaceRecord record, Matrix toScreen = default, TextNote? skip = null, Func<TextNote, Point>? placeNote = null, Func<TextNote, float>? opacity = null, Func<InkStroke, Matrix>? placeStroke = null, InkAdornments? adornments = null, Func<IInk, bool>? moving = null)
     {
         _pending.Clear();
-        var world = World();
-        if (moving is not null && (moving == _stillWithout || PaintStill(record, toScreen, skip, placeNote, opacity, placeStroke, world, moving)))
+        if (moving is not null)
         {
-            var target = Begin(_ink!);
-            target.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
-            target.DrawImage(_still!, Vector2.Zero, new RawRectF(0, 0, Width, Height), InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
-            DrawItems(target, record, toScreen, skip, placeNote, opacity, placeStroke, world, moving);
-            if (adornments is not null)
-                DrawAdornments(target, adornments, world);
-            target.PopAxisAlignedClip();
-            End(target);
-            return Bounds;
+            _drawnOrigin = _origin;
+            var stillWorld = World(_origin);
+            if (moving == _stillWithout || PaintStill(record, toScreen, skip, placeNote, opacity, placeStroke, stillWorld, moving))
+            {
+                _inkDrawn = false;
+                var target = Begin(_ink!);
+                target.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
+                target.DrawImage(_still!, Vector2.Zero, new RawRectF(0, 0, Width, Height), InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+                DrawItems(target, record, toScreen, skip, placeNote, opacity, placeStroke, stillWorld, moving);
+                if (adornments is not null)
+                    DrawAdornments(target, adornments, stillWorld);
+                target.PopAxisAlignedClip();
+                End(target);
+                return Bounds;
+            }
         }
 
         ReleaseStill();
+        if (moving is null && adornments is null && CanKeepInk(record, toScreen, skip, placeNote, opacity, placeStroke))
+            return Bounds;
+
+        int padX = _room > 1 && moving is null && adornments is null ? Math.Max(0, (_capacityWidth - Width) / 2) : 0;
+        int padY = _room > 1 && moving is null && adornments is null ? Math.Max(0, (_capacityHeight - Height) / 2) : 0;
+        _drawnOrigin = new Point(_origin.X - padX / _scale, _origin.Y - padY / _scale);
+        var world = World(_drawnOrigin);
         _generation++;
         var context = Begin(_ink!);
-        context.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
+        context.PushAxisAlignedClip(new RawRectF(0, 0, _capacityWidth, _capacityHeight), AntialiasMode.Aliased);
         context.Clear(new Color4(0, 0, 0, 0));
-        DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, null);
+        bool fading = DrawItems(context, record, toScreen, skip, placeNote, opacity, placeStroke, world, null);
         if (adornments is not null)
             DrawAdornments(context, adornments, world);
         context.PopAxisAlignedClip();
         End(context);
         ForgetUnused();
+        if (moving is null && adornments is null && !fading)
+            RecordDrawnInk(record, toScreen, skip, placeNote, opacity, placeStroke);
+        else
+            _inkDrawn = false;
         return Bounds;
+    }
+
+    /// <summary>
+    /// Whether <see cref="_ink"/> already holds what <see cref="Redraw"/> would draw across its whole
+    /// capacity (e.g. a space being reshaped whose paint and text have not moved on screen).
+    /// </summary>
+    private bool CanKeepInk(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke)
+    {
+        if (!_inkDrawn || _scale != _drawnScale || ThemeInk != _drawnThemeInk || ThemeAccent != _drawnThemeAccent || skip != _drawnSkip)
+            return false;
+        double dx = (_origin.X - _drawnOrigin.X) * _scale, dy = (_origin.Y - _drawnOrigin.Y) * _scale;
+        int sx = (int)Math.Round(dx), sy = (int)Math.Round(dy);
+        if (Math.Abs(dx - sx) > 1e-2 || Math.Abs(dy - sy) > 1e-2 || sx < 0 || sy < 0 || sx + Width > _capacityWidth || sy + Height > _capacityHeight)
+            return false;
+        if (record.Strokes.Count != _drawnStrokes.Count)
+            return false;
+        for (int i = 0; i < record.Strokes.Count; i++)
+        {
+            var stroke = record.Strokes[i];
+            var drawn = _drawnStrokes[i];
+            var m = placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor);
+            if (!ReferenceEquals(stroke, drawn.Stroke) || !ReferenceEquals(stroke.Points, drawn.Points) || stroke.Revision != drawn.Revision || stroke.Thickness != drawn.Thickness || stroke.Color != drawn.Color || m != drawn.ToScreen)
+                return false;
+        }
+        int noteIndex = 0;
+        foreach (var note in record.Notes)
+        {
+            if (note == skip || note.Text.Length == 0)
+                continue;
+            float alpha = opacity?.Invoke(note) ?? 1;
+            if (alpha <= 0)
+                continue;
+            if (noteIndex >= _drawnNotes.Count)
+                return false;
+            var drawn = _drawnNotes[noteIndex++];
+            var at = placeNote?.Invoke(note) ?? toScreen.Transform(new Point(note.X, note.Y));
+            var file = note.File;
+            if (!ReferenceEquals(note, drawn.Note) || note.Text != drawn.Text || note.FontSize != drawn.FontSize || note.Width != drawn.Width || note.Bold != drawn.Bold || note.Italic != drawn.Italic || note.Color != drawn.Color || (file?.Scroll ?? 0) != drawn.Scroll || (file?.Height ?? 0) != drawn.FileHeight || file?.Markdown != drawn.Markdown || at != drawn.At || alpha != drawn.Opacity)
+                return false;
+        }
+        return noteIndex == _drawnNotes.Count;
+    }
+
+    private void RecordDrawnInk(SpaceRecord record, Matrix toScreen, TextNote? skip, Func<TextNote, Point>? placeNote, Func<TextNote, float>? opacity, Func<InkStroke, Matrix>? placeStroke)
+    {
+        _inkDrawn = true;
+        _drawnScale = _scale;
+        _drawnThemeInk = ThemeInk;
+        _drawnThemeAccent = ThemeAccent;
+        _drawnSkip = skip;
+        _drawnStrokes.Clear();
+        foreach (var stroke in record.Strokes)
+        {
+            var m = placeStroke?.Invoke(stroke) ?? stroke.Placed(toScreen, record.Anchor);
+            _drawnStrokes.Add(new DrawnStroke(stroke, stroke.Points, stroke.Revision, stroke.Thickness, stroke.Color, m));
+        }
+        _drawnNotes.Clear();
+        foreach (var note in record.Notes)
+        {
+            if (note == skip || note.Text.Length == 0)
+                continue;
+            float alpha = opacity?.Invoke(note) ?? 1;
+            if (alpha <= 0)
+                continue;
+            var at = placeNote?.Invoke(note) ?? toScreen.Transform(new Point(note.X, note.Y));
+            var file = note.File;
+            _drawnNotes.Add(new DrawnNote(note, note.Text, note.FontSize, note.Width, note.Bold, note.Italic, note.Color, file?.Scroll ?? 0, file?.Height ?? 0, file?.Markdown, at, alpha));
+        }
     }
 
     /// <summary>
@@ -239,16 +339,17 @@ internal sealed class InkLayer : IDisposable
     /// <returns>The changed area, in device pixels.</returns>
     public Int32Rect AddSegment(Point from, Point to, double thickness, Color? color = null)
     {
-        var a = new Vector2((float)(from.X - _origin.X), (float)(from.Y - _origin.Y));
-        var b = new Vector2((float)(to.X - _origin.X), (float)(to.Y - _origin.Y));
+        var a = new Vector2((float)(from.X - _drawnOrigin.X), (float)(from.Y - _drawnOrigin.Y));
+        var b = new Vector2((float)(to.X - _drawnOrigin.X), (float)(to.Y - _drawnOrigin.Y));
         double reach = thickness / 2;
-        int x0 = Math.Clamp((int)Math.Floor((Math.Min(a.X, b.X) - reach) * _scale) - Bleed, 0, Width);
-        int y0 = Math.Clamp((int)Math.Floor((Math.Min(a.Y, b.Y) - reach) * _scale) - Bleed, 0, Height);
-        int x1 = Math.Clamp((int)Math.Ceiling((Math.Max(a.X, b.X) + reach) * _scale) + Bleed, 0, Width);
-        int y1 = Math.Clamp((int)Math.Ceiling((Math.Max(a.Y, b.Y) + reach) * _scale) + Bleed, 0, Height);
+        int x0 = Math.Clamp((int)Math.Floor((Math.Min(from.X, to.X) - _origin.X - reach) * _scale) - Bleed, 0, Width);
+        int y0 = Math.Clamp((int)Math.Floor((Math.Min(from.Y, to.Y) - _origin.Y - reach) * _scale) - Bleed, 0, Height);
+        int x1 = Math.Clamp((int)Math.Ceiling((Math.Max(from.X, to.X) - _origin.X + reach) * _scale) + Bleed, 0, Width);
+        int y1 = Math.Clamp((int)Math.Ceiling((Math.Max(from.Y, to.Y) - _origin.Y + reach) * _scale) + Bleed, 0, Height);
         if (x1 <= x0 || y1 <= y0)
             return Int32Rect.Empty;
         _pending.Add(new Segment(a, b, (float)thickness, color ?? ThemeInk));
+        _inkDrawn = false;
         return new Int32Rect(x0, y0, x1 - x0, y1 - y0);
     }
 
@@ -284,7 +385,10 @@ internal sealed class InkLayer : IDisposable
         context.PushAxisAlignedClip(rect, AntialiasMode.Aliased);
         context.Clear(new Color4(0, 0, 0, 0));
         var corner = new Vector2(area.X, area.Y);
-        context.DrawImage(_ink!, corner, rect, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
+        int sx = (int)Math.Round((_origin.X - _drawnOrigin.X) * _scale);
+        int sy = (int)Math.Round((_origin.Y - _drawnOrigin.Y) * _scale);
+        var inkRect = new RawRectF(area.X + sx, area.Y + sy, area.X + area.Width + sx, area.Y + area.Height + sy);
+        context.DrawImage(_ink!, corner, inkRect, InterpolationMode.NearestNeighbor, CompositeMode.SourceCopy);
         context.DrawImage(_mask!, corner, rect, InterpolationMode.NearestNeighbor, CompositeMode.DestinationIn);
         context.PopAxisAlignedClip();
         context.Transform = Matrix3x2.Identity;
@@ -331,7 +435,7 @@ internal sealed class InkLayer : IDisposable
             brush.Dispose();
         _brushes.Clear();
         foreach (var stroke in _strokes.Values)
-            stroke.Geometry.Dispose();
+            stroke.Dispose();
         _strokes.Clear();
         foreach (var note in _notes.Values)
             note.Layout.Dispose();
@@ -342,6 +446,7 @@ internal sealed class InkLayer : IDisposable
         foreach (var fade in _fades.Values)
             fade.Dispose();
         _fades.Clear();
+        _context1?.Dispose();
         _dashed?.Dispose();
         _round?.Dispose();
         _ink?.Dispose();
@@ -369,10 +474,11 @@ internal sealed class InkLayer : IDisposable
     }
 
     /// <summary>From screen DIPs to this layer's pixels.</summary>
-    private Matrix3x2 World() =>
-        Matrix3x2.CreateTranslation((float)-_origin.X, (float)-_origin.Y) * Matrix3x2.CreateScale((float)_scale);
+    private Matrix3x2 World(Point origin) =>
+        Matrix3x2.CreateTranslation((float)-origin.X, (float)-origin.Y) * Matrix3x2.CreateScale((float)_scale);
 
     private double _room = 1;
+    private bool _expand;
     private bool _trim;
 
     /// <summary>
@@ -384,6 +490,7 @@ internal sealed class InkLayer : IDisposable
         get => _room;
         set
         {
+            _expand = value > _room;
             _trim |= value < _room;
             _room = value;
         }
@@ -392,9 +499,11 @@ internal sealed class InkLayer : IDisposable
     /// <summary>Makes sure the bitmaps hold the layer's size; they are only made anew when too small (or far too big).</summary>
     private void EnsureCapacity()
     {
-        int wantedWidth = Headroom.Wanted(Width, _room), wantedHeight = Headroom.Wanted(Height, _room);
+        double room = _expand ? _room : 1;
+        _expand = false;
+        int wantedWidth = Headroom.Wanted(Width, room), wantedHeight = Headroom.Wanted(Height, room);
         bool fits = _ink is not null && _capacityWidth >= wantedWidth && _capacityHeight >= wantedHeight;
-        bool wasteful = (long)_capacityWidth * _capacityHeight > 4L * Math.Max(Step * Step, (long)wantedWidth * wantedHeight);
+        bool wasteful = _room <= 1 && (long)_capacityWidth * _capacityHeight > 4L * Math.Max(Step * Step, (long)wantedWidth * wantedHeight);
         bool oversized = _trim && (_capacityWidth > Headroom.Size(wantedWidth, 0) || _capacityHeight > Headroom.Size(wantedHeight, 0));
         _trim = false;
         if (fits && !wasteful && !oversized)
@@ -411,7 +520,7 @@ internal sealed class InkLayer : IDisposable
         _ink = _gpu.D2DContext.CreateBitmap(size, IntPtr.Zero, 0, new BitmapProperties1(GpuCompositor.Bgra, 96, 96, BitmapOptions.Target));
         _mask = _gpu.D2DContext.CreateBitmap(size, IntPtr.Zero, 0, new BitmapProperties1(GpuCompositor.Bgra, 96, 96, BitmapOptions.Target));
         _maskStale = true;
-
+        _inkDrawn = false;
     }
 
     /// <summary>The outline, filled, in the mask's alpha.</summary>
@@ -421,6 +530,7 @@ internal sealed class InkLayer : IDisposable
             return;
         _maskStale = false;
         var context = Begin(_mask!);
+        context.PushAxisAlignedClip(new RawRectF(0, 0, Width, Height), AntialiasMode.Aliased);
         context.Clear(new Color4(0, 0, 0, 0));
         if (_outline.Figures.Length > 0)
         {
@@ -428,6 +538,7 @@ internal sealed class InkLayer : IDisposable
             context.Transform = Matrix3x2.CreateScale((float)_scale);
             context.FillGeometry(shape, Brush(context, Colors.White));
         }
+        context.PopAxisAlignedClip();
         End(context);
     }
 
@@ -465,17 +576,28 @@ internal sealed class InkLayer : IDisposable
             return;
         }
 
-        var geometry = Geometry(stroke); // in the record's coordinates
+        var cached = Stroke(stroke); // in the record's coordinates
         if (toScreen.M11 == 1 && toScreen.M22 == 1 && toScreen.M12 == 0 && toScreen.M21 == 0)
         {
-            // Only moved: the cached geometry as it is.
+            var box = stroke.Box;
+            double reach = thickness / 2 + 2;
+            if (box.Right + toScreen.OffsetX + reach < _drawnOrigin.X ||
+                box.Left + toScreen.OffsetX - reach > _drawnOrigin.X + _capacityWidth / _scale ||
+                box.Bottom + toScreen.OffsetY + reach < _drawnOrigin.Y ||
+                box.Top + toScreen.OffsetY - reach > _drawnOrigin.Y + _capacityHeight / _scale)
+                return;
+
+            // Only moved: the cached geometry as it is, tessellated once for this scale and pen width.
             context.Transform = Matrix3x2.CreateTranslation((float)toScreen.OffsetX, (float)toScreen.OffsetY) * world;
-            context.DrawGeometry(geometry, brush, thickness, Round());
+            if (Context1(context) is { } context1)
+                context1.DrawGeometryRealization(cached.Realize(context1, thickness, _scale, Round()), brush);
+            else
+                context.DrawGeometry(cached.Geometry, brush, thickness, Round());
             return;
         }
         // Stretched: the points go through the mapping, the pen keeps its width.
         var mapping = new Matrix3x2((float)toScreen.M11, (float)toScreen.M12, (float)toScreen.M21, (float)toScreen.M22, (float)toScreen.OffsetX, (float)toScreen.OffsetY);
-        using var mapped = _gpu.D2DFactory.CreateTransformedGeometry(geometry, mapping);
+        using var mapped = _gpu.D2DFactory.CreateTransformedGeometry(cached.Geometry, mapping);
         context.Transform = world;
         context.DrawGeometry(mapped, brush, thickness, Round());
     }
@@ -652,14 +774,14 @@ internal sealed class InkLayer : IDisposable
     }
 
     /// <summary>A stroke's path in the record's coordinates, made once per version of its points.</summary>
-    private ID2D1PathGeometry Geometry(InkStroke stroke)
+    private CachedStroke Stroke(InkStroke stroke)
     {
         if (_strokes.TryGetValue(stroke, out var cached) && cached.Points == stroke.Points && cached.Revision == stroke.Revision)
         {
             cached.Generation = _generation;
-            return cached.Geometry;
+            return cached;
         }
-        cached?.Geometry.Dispose();
+        cached?.Dispose();
         var points = stroke.Points;
         var path = _gpu.D2DFactory.CreatePathGeometry();
         using (var sink = path.Open())
@@ -670,8 +792,22 @@ internal sealed class InkLayer : IDisposable
             sink.EndFigure(FigureEnd.Open);
             sink.Close();
         }
-        _strokes[stroke] = new CachedStroke(path, stroke.Points, stroke.Revision) { Generation = _generation };
-        return path;
+        cached = new CachedStroke(path, stroke.Points, stroke.Revision) { Generation = _generation };
+        _strokes[stroke] = cached;
+        return cached;
+    }
+
+    private ID2D1DeviceContext1? Context1(ID2D1DeviceContext context)
+    {
+        if (_context1Of != context.NativePointer)
+        {
+            _context1?.Dispose();
+            _context1 = context.QueryInterfaceOrNull<ID2D1DeviceContext1>();
+            _context1Of = context.NativePointer;
+            foreach (var stroke in _strokes.Values)
+                stroke.ClearRealization();
+        }
+        return _context1;
     }
 
     /// <summary>Lets go of paths and layouts of ink that was not drawn this time (undone, erased, edited).</summary>
@@ -684,7 +820,7 @@ internal sealed class InkLayer : IDisposable
         }
         foreach (var stroke in _unusedStrokes)
         {
-            _strokes[stroke].Geometry.Dispose();
+            _strokes[stroke].Dispose();
             _strokes.Remove(stroke);
         }
         _unusedStrokes.Clear();
@@ -734,6 +870,10 @@ internal sealed class InkLayer : IDisposable
 
     private readonly record struct Segment(Vector2 From, Vector2 To, float Thickness, Color Color);
 
+    private readonly record struct DrawnStroke(InkStroke Stroke, double[] Points, int Revision, double Thickness, string? Color, Matrix ToScreen);
+
+    private readonly record struct DrawnNote(TextNote Note, string Text, double FontSize, double? Width, bool Bold, bool Italic, string? Color, double Scroll, double FileHeight, bool? Markdown, Point At, float Opacity);
+
     private sealed class CachedDocument(NoteDocument document, Color accent)
     {
         public NoteDocument Document { get; } = document;
@@ -743,7 +883,7 @@ internal sealed class InkLayer : IDisposable
         public int Generation { get; set; }
     }
 
-    private sealed class CachedStroke(ID2D1PathGeometry geometry, double[] points, int revision)
+    private sealed class CachedStroke(ID2D1PathGeometry geometry, double[] points, int revision) : IDisposable
     {
         public ID2D1PathGeometry Geometry { get; } = geometry;
 
@@ -752,6 +892,35 @@ internal sealed class InkLayer : IDisposable
         public int Revision { get; } = revision;
 
         public int Generation { get; set; }
+
+        public ID2D1GeometryRealization? Realization { get; private set; }
+
+        private float _realizedThickness;
+        private double _realizedScale;
+
+        public ID2D1GeometryRealization Realize(ID2D1DeviceContext1 context, float thickness, double scale, ID2D1StrokeStyle style)
+        {
+            if (Realization is null || _realizedThickness != thickness || _realizedScale != scale)
+            {
+                Realization?.Dispose();
+                Realization = context.CreateStrokedGeometryRealization(Geometry, 0.25f / (float)scale, thickness, style);
+                _realizedThickness = thickness;
+                _realizedScale = scale;
+            }
+            return Realization;
+        }
+
+        public void ClearRealization()
+        {
+            Realization?.Dispose();
+            Realization = null;
+        }
+
+        public void Dispose()
+        {
+            Realization?.Dispose();
+            Geometry.Dispose();
+        }
     }
 
     private sealed class CachedNote(Vortice.DirectWrite.IDWriteTextLayout layout, string text, double fontSize, double? width, bool bold, bool italic)

@@ -277,9 +277,7 @@ internal sealed class MoveOverlay : GpuOverlay
         if (text != _sizeText)
         {
             _sizeText = text;
-            var old = _sizePicture;
-            _size.Picture = _sizePicture = OverlayText.Paint(Gpu, text, 12);
-            old?.Dispose();
+            _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, text, 12);
         }
         _size.MoveTo(new Point(box.X, box.Bottom + ArrowHandle.Size / 2 + 4)); // clear of the arrows
         _size.Shown = shown;

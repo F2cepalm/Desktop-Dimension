@@ -14,14 +14,27 @@ internal sealed class DreamyLook : ISpaceLook
 
     public bool HasBursts => _raster.HasBursts;
 
+    private double _room = 1;
+    private bool _expand;
+
     public void SetShape(Geometry outline, Rect world)
     {
         _world = world;
-        _raster = new DreamRaster(outline, world, recycle: _raster, ReshapeRoom);
+        double room = _expand ? _room : 1;
+        _expand = false;
+        _raster = new DreamRaster(outline, world, recycle: _raster, room);
         _renderedAt = double.NaN;
     }
 
-    public double ReshapeRoom { get; set; } = 1;
+    public double ReshapeRoom
+    {
+        get => _room;
+        set
+        {
+            _expand = value > _room;
+            _room = value;
+        }
+    }
 
     public void Move(Geometry outline, Rect world)
     {

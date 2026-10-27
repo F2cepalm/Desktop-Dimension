@@ -52,6 +52,7 @@ internal sealed class BlockOverlay : GpuOverlay
     private OverlayPicture? _sizePicture;
     private string _sizeText = "";
     private SpaceWindow? _preview;
+    private Rect _previewScreen;
     private Rect _rect;
     private bool _dropped;
     private BlockGrip _drag;
@@ -91,7 +92,8 @@ internal sealed class BlockOverlay : GpuOverlay
     protected override void OnShown()
     {
         // The preview goes just under this overlay, so it needs the overlay on screen first.
-        _preview = new SpaceWindow(new SpaceRecord(), Outline(), IntPtr.Zero, Gpu, _spaces.Theme, previewUnder: Handle);
+        _previewScreen = BlockEdit.Snap(Block, DreamStyle.ArtPixel);
+        _preview = new SpaceWindow(new SpaceRecord(), Outline(_previewScreen), IntPtr.Zero, Gpu, _spaces.Theme, previewUnder: Handle);
         Universe.Attach(_preview);
     }
 
@@ -214,16 +216,23 @@ internal sealed class BlockOverlay : GpuOverlay
             Dismiss();
     }
 
-    /// <summary>The block in screen DIPs, edges on the art-pixel grid so its rim is straight.</summary>
-    private PathGeometry Outline()
-    {
-        var screen = BlockEdit.Snap(Block, DreamStyle.ArtPixel);
-        return SpaceGeometry.FromStroke([screen.TopLeft, screen.TopRight, screen.BottomRight, screen.BottomLeft], new Vector(0, 0));
-    }
+    private PathGeometry Outline() => Outline(BlockEdit.Snap(Block, DreamStyle.ArtPixel));
+
+    private static PathGeometry Outline(Rect screen) =>
+        SpaceGeometry.FromStroke([screen.TopLeft, screen.TopRight, screen.BottomRight, screen.BottomLeft], new Vector(0, 0));
 
     private void Layout()
     {
-        _preview?.ReshapeLive(Outline(), Matrix.Identity); // drawn on the next frame; in Dreamy a resize wobbles like jelly
+        var screen = BlockEdit.Snap(Block, DreamStyle.ArtPixel);
+        if (_preview is not null && screen != _previewScreen)
+        {
+            var outline = Outline(screen);
+            if (Math.Abs(screen.Width - _previewScreen.Width) < 1e-4 && Math.Abs(screen.Height - _previewScreen.Height) < 1e-4 && !_preview.IsReshaping)
+                _preview.Move(outline, screen.TopLeft - _previewScreen.TopLeft, Matrix.Identity);
+            else
+                _preview.ReshapeLive(outline, Matrix.Identity); // drawn on the next frame; in Dreamy a resize wobbles like jelly
+            _previewScreen = screen;
+        }
 
         // The outline, just outside the block, whether or not it has been dropped.
         var box = Rect.Inflate(_rect, FrameGap, FrameGap);
@@ -255,9 +264,7 @@ internal sealed class BlockOverlay : GpuOverlay
         if (text != _sizeText)
         {
             _sizeText = text;
-            var old = _sizePicture;
-            _size.Picture = _sizePicture = OverlayText.Paint(Gpu, text, 12);
-            old?.Dispose();
+            _size.Picture = OverlayText.Repaint(Gpu, ref _sizePicture, text, 12);
         }
         _size.MoveTo(new Point(_rect.X, _rect.Bottom + 12)); // clear of the rim's wobble
         _size.Shown = true;

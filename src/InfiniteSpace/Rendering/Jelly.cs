@@ -190,6 +190,16 @@ internal sealed class Jelly
         _hasRest = false;
     }
 
+    private Rect _mapShown;
+    private Func<Point, Point>? _map;
+
+    /// <summary>A reusable point mapper for <paramref name="shown"/> (avoids allocating a closure every frame).</summary>
+    public Func<Point, Point> Mapper(Rect shown)
+    {
+        _mapShown = shown;
+        return _map ??= p => Map(p, _mapShown);
+    }
+
     /// <summary>
     /// Where a point of the shape at rest is shown now: stretched with the bounds, and pulled in (or
     /// pushed out) at the middle of the sides while the shape is stretched (or squashed); the corners

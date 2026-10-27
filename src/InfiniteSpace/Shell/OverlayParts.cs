@@ -54,16 +54,21 @@ internal static class SurfaceDrawing
 /// <summary>A small picture drawn once with Direct2D, shown by any number of <see cref="OverlaySprite"/>s.</summary>
 internal sealed class OverlayPicture : IDisposable
 {
-    private OverlayPicture(IDCompositionSurface surface, Size size)
+    private readonly int _capacityWidth;
+    private readonly int _capacityHeight;
+
+    private OverlayPicture(IDCompositionSurface surface, int capacityWidth, int capacityHeight, Size size)
     {
         Surface = surface;
+        _capacityWidth = capacityWidth;
+        _capacityHeight = capacityHeight;
         Size = size;
     }
 
     public IDCompositionSurface Surface { get; }
 
     /// <summary>Its size in DIPs.</summary>
-    public Size Size { get; }
+    public Size Size { get; private set; }
 
     /// <param name="width">DIPs.</param>
     /// <param name="height">DIPs.</param>
@@ -73,9 +78,32 @@ internal sealed class OverlayPicture : IDisposable
         float scale = (float)Native.Dpi.Scale;
         int w = Math.Max(1, (int)Math.Ceiling(width * scale)), h = Math.Max(1, (int)Math.Ceiling(height * scale));
         gpu.Composition.CreateSurface((uint)w, (uint)h, Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied, out var surface).CheckError();
-        var picture = new OverlayPicture(surface, new Size(w / scale, h / scale));
+        var picture = new OverlayPicture(surface, w, h, new Size(w / scale, h / scale));
         // A surface's first drawing covers it all (an atlas may place it among others: stay inside it).
         SurfaceDrawing.Draw(gpu, surface, new RawRect(0, 0, w, h), scale, draw);
+        return picture;
+    }
+
+    /// <summary>
+    /// Like <see cref="Paint"/>, reusing <paramref name="picture"/>'s surface when it is already big enough.
+    /// </summary>
+    public static OverlayPicture Repaint(GpuCompositor gpu, ref OverlayPicture? picture, double width, double height, double minWidth, double minHeight, Action<ID2D1DeviceContext> draw)
+    {
+        float scale = (float)Native.Dpi.Scale;
+        int w = Math.Max(1, (int)Math.Ceiling(width * scale)), h = Math.Max(1, (int)Math.Ceiling(height * scale));
+        if (picture is null || w > picture._capacityWidth || h > picture._capacityHeight)
+        {
+            picture?.Dispose();
+            int capW = Math.Max(w, (int)Math.Ceiling(minWidth * scale));
+            int capH = Math.Max(h, (int)Math.Ceiling(minHeight * scale));
+            gpu.Composition.CreateSurface((uint)capW, (uint)capH, Format.B8G8R8A8_UNorm, AlphaMode.Premultiplied, out var surface).CheckError();
+            picture = new OverlayPicture(surface, capW, capH, new Size(w / scale, h / scale));
+        }
+        else
+        {
+            picture.Size = new Size(w / scale, h / scale);
+        }
+        SurfaceDrawing.Draw(gpu, picture.Surface, new RawRect(0, 0, picture._capacityWidth, picture._capacityHeight), scale, draw);
         return picture;
     }
 
@@ -230,6 +258,24 @@ internal static class OverlayText
             }
             using var white = context.CreateSolidColorBrush(new Color4(1, 1, 1, 1));
             context.DrawTextLayout(padding, layout, white, DrawTextOptions.None);
+        });
+    }
+
+    /// <summary>
+    /// Like <see cref="Paint"/>, into <paramref name="picture"/> when its surface is already big enough
+    /// (so a size label changing every frame redraws in place without making a new compositor surface).
+    /// </summary>
+    public static OverlayPicture Repaint(GpuCompositor gpu, ref OverlayPicture? picture, string text, float fontSize)
+    {
+        using var layout = NoteText.Factory.CreateTextLayout(text, Format(fontSize), 1e6f, 1e6f);
+        layout.WordWrapping = WordWrapping.NoWrap;
+        var metrics = layout.Metrics;
+        double width = Math.Ceiling(metrics.WidthIncludingTrailingWhitespace);
+        double height = Math.Ceiling(metrics.Height);
+        return OverlayPicture.Repaint(gpu, ref picture, width, height, minWidth: 120, minHeight: 24, context =>
+        {
+            using var white = context.CreateSolidColorBrush(new Color4(1, 1, 1, 1));
+            context.DrawTextLayout(Vector2.Zero, layout, white, DrawTextOptions.None);
         });
     }
 
