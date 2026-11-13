@@ -180,7 +180,7 @@ internal sealed class Bench : IDisposable
             ShowInTaskbar = false,
             ShowActivated = false,
             Topmost = topmost,
-            Title = "Infinite Space perf host",
+            Title = "Desktop_Dimension perf host",
         };
         window.Show();
         _windows.Add(window);

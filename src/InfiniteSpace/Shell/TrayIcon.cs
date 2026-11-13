@@ -87,7 +87,7 @@ internal sealed class TrayIcon : IDisposable
         _icon = new WinForms.NotifyIcon
         {
             Icon = _image,
-            Text = "Infinite Space",
+            Text = "Desktop_Dimension",
             ContextMenuStrip = menu,
             Visible = true,
         };

@@ -29,7 +29,7 @@ internal sealed class InkPaletteWindow : Window
     {
         _pen = pen;
 
-        Title = "Infinite Space – ink";
+        Title = "Desktop_Dimension – ink";
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
         Background = Brushes.Transparent;

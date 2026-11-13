@@ -70,7 +70,7 @@ internal sealed class TextEntry : Window
         if (_file is not null)
             _wrapWidth ??= NoteDocument.DefaultWidth;
 
-        Title = "Infinite Space – text";
+        Title = "Desktop_Dimension – text";
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
         Background = Brushes.Transparent;

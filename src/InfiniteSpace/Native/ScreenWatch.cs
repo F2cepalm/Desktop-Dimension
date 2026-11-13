@@ -17,7 +17,7 @@ internal sealed class ScreenWatch : IDisposable
 
     public ScreenWatch()
     {
-        _window = new HwndSource(new HwndSourceParameters("Infinite Space screen watch")
+        _window = new HwndSource(new HwndSourceParameters("Desktop_Dimension screen watch")
         {
             WindowStyle = unchecked((int)Win32.WS_POPUP),
             ExtendedWindowStyle = (int)(Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE),

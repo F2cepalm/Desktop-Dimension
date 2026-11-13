@@ -50,7 +50,7 @@ internal sealed class FrameClock : IDisposable
     {
         _dispatcher = dispatcher;
         _tick = tick;
-        _thread = new Thread(Run) { IsBackground = true, Name = "Infinite Space frame clock", Priority = ThreadPriority.AboveNormal };
+        _thread = new Thread(Run) { IsBackground = true, Name = "Desktop_Dimension frame clock", Priority = ThreadPriority.AboveNormal };
         _thread.Start();
     }
 

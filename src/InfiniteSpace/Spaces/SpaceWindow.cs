@@ -114,7 +114,7 @@ internal sealed partial class SpaceWindow : IDisposable
         _look = CreateLook();
 
         // No redirection bitmap: the window shows only what DirectComposition puts in it.
-        _source = new HwndSource(new HwndSourceParameters("Infinite Space")
+        _source = new HwndSource(new HwndSourceParameters("Desktop_Dimension")
         {
             WindowStyle = unchecked((int)Win32.WS_POPUP),
             ExtendedWindowStyle = (int)(Win32.WS_EX_NOREDIRECTIONBITMAP | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE),

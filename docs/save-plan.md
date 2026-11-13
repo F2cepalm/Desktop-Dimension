@@ -39,9 +39,9 @@ You point at a space and press the save hotkey, or pick **Save** on the wheel or
   - Plain spaces, text cards and blocks can all be saved. Screen notes can't.
   - If the mouse isn't over a space, nothing opens and a tray notice says "Point at a space to save it".
 - **The dialog.** It is the standard Windows Save dialog:
-  - **Folder:** `Documents\Infinite Space\Saved spaces\`, created on first use. Once you pick another folder, that one is remembered (`SaveDirectory` in `settings.json`).
+  - **Folder:** `Documents\Desktop_Dimension\Saved spaces\`, created on first use. Once you pick another folder, that one is remembered (`SaveDirectory` in `settings.json`).
   - **File name:** the first line of the space's text (characters a file name can't hold are removed, and it's cut to 40 characters). If there's no text, the name is `Space 2026-10-02 14-30`.
-  - **File type:** "Infinite Space (*.isf)".
+  - **File type:** "Desktop_Dimension (*.isf)".
   - The space flashes briefly so you can see which one is being saved.
 - **After saving.** A tray notice says "Saved to …". Clicking it opens the folder with the file selected. Focus goes back to the app you were in.
 - **Errors.** A disk or permission error shows a tray notice with the reason and is logged. Nothing else changes.

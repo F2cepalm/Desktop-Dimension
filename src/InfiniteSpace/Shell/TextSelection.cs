@@ -147,7 +147,7 @@ internal static class TextSelection
                 done.SetException(ex);
             }
         })
-        { IsBackground = true, Name = "Infinite Space clipboard" };
+        { IsBackground = true, Name = "Desktop_Dimension clipboard" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return done.Task;

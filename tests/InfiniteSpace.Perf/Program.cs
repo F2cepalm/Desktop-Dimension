@@ -42,7 +42,7 @@ internal static class Program
 
     private static int Run(Options options)
     {
-        Console.WriteLine($"Infinite Space perf: {Dpi.Scale * 100:0}% scaling, GC {(GCSettings.IsServerGC ? "server" : "workstation")}, latency {GCSettings.LatencyMode}");
+        Console.WriteLine($"Desktop_Dimension perf: {Dpi.Scale * 100:0}% scaling, GC {(GCSettings.IsServerGC ? "server" : "workstation")}, latency {GCSettings.LatencyMode}");
         var results = new List<Result>();
         foreach (var action in Scenarios.All)
         {

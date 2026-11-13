@@ -112,7 +112,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         }
         else if (spaces.Count == 0)
         {
-            _tray.Notify("Infinite Space is running", $"Press {_wheelHotkey ?? "Ctrl+Alt+S"} for tools, or Ctrl+Alt+S and draw any shape to open a space.");
+            _tray.Notify("Desktop_Dimension is running", $"Press {_wheelHotkey ?? "Ctrl+Alt+S"} for tools, or Ctrl+Alt+S and draw any shape to open a space.");
         }
     }
 
@@ -338,7 +338,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         FadeInkTools();
         var answer = MessageBox.Show(
             $"Erase all {spaces.Count} spaces and screen notes? This cannot be undone.",
-            "Infinite Space",
+            "Desktop_Dimension",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);
@@ -354,7 +354,7 @@ internal sealed partial class ShellController(SpaceManager spaces, SpaceStore st
         FadeInkTools();
         var answer = MessageBox.Show(
             "Clear all screen notes? This cannot be undone.",
-            "Infinite Space",
+            "Desktop_Dimension",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);

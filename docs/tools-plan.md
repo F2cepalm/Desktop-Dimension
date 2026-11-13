@@ -23,7 +23,7 @@ After this work:
    - Don't add NuGet packages.
 3. **Don't touch the rendering hot paths** (looks, `DreamRaster`, `Jelly`, `GpuCompositor`, `Universe`, `SpaceSurface`) except where a step says so.
 4. **The repo is under git**, with a baseline commit made before this work. Once a phase passes, commit it as "Tools phase N: …" so it can be diffed and reverted.
-5. **The app is single-instance.** Exit the running Infinite Space (tray → Exit) before `dotnet run --project src/InfiniteSpace`.
+5. **The app is single-instance.** Exit the running Desktop_Dimension (tray → Exit) before `dotnet run --project src/InfiniteSpace`.
 6. Commands:
    - Build: `dotnet build`
    - Tests: `dotnet test`
@@ -1756,7 +1756,7 @@ internal sealed class ScreenInkOverlay : GpuOverlay
 - Clicks on the browser work everywhere except on the ink.
 - With the Hand, drag the red stroke: it moves, and **Ctrl+Z** (mouse on the ink) moves it back.
 - Move and resize the browser: the notes follow, keep their size, and aren't cut off.
-- Minimise the browser: the notes hide with it. Close it and reopen the same page: the notes come back. Restart Infinite Space: they're still there.
+- Minimise the browser: the notes hide with it. Close it and reopen the same page: the notes come back. Restart Desktop_Dimension: they're still there.
 - Draw on the bare desktop: the notes sit above the wallpaper.
 - **Ctrl+Alt+E** over screen notes doesn't remove them. Erase brush outlines show only spaces.
 - Tray → **Clear screen notes…** removes them all.

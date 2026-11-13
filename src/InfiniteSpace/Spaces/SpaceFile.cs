@@ -23,7 +23,7 @@ internal static class SpaceFile
     public const int Version = 1;
 
     /// <summary>The Save and Open dialogs' file type.</summary>
-    public const string Filter = "Infinite Space (*.spsf)|*.spsf";
+    public const string Filter = "Desktop_Dimension (*.spsf)|*.spsf";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -33,7 +33,7 @@ internal static class SpaceFile
 
     /// <summary>The folder saves go to unless another was picked: one of this app's own, in Documents.</summary>
     public static string DefaultFolder =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Infinite Space", "Saved spaces");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Desktop_Dimension", "Saved spaces");
 
     /// <summary>
     /// A copy of <paramref name="shown"/> (in screen DIPs) ready to save: its top-left at (0, 0), on no app,
@@ -72,12 +72,12 @@ internal static class SpaceFile
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or DecoderFallbackException)
         {
-            throw new SpaceFileException("This isn't a saved Infinite Space space.", ex);
+            throw new SpaceFileException("This isn't a saved Desktop_Dimension space.", ex);
         }
         if (document?.Format != Format || document.Space is not { Figures.Count: > 0 } space)
-            throw new SpaceFileException("This isn't a saved Infinite Space space.");
+            throw new SpaceFileException("This isn't a saved Desktop_Dimension space.");
         if (document.Version > Version)
-            throw new SpaceFileException("This space was saved by a newer Infinite Space. Update the app to open it.");
+            throw new SpaceFileException("This space was saved by a newer Desktop_Dimension. Update the app to open it.");
         space.Id = Guid.NewGuid();
         space.Kind = SpaceKind.Space;
         space.Host = null;

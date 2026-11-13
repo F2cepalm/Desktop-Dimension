@@ -129,7 +129,7 @@ public class SurfaceTests
         {
             Width = width;
             Height = height;
-            _source = new HwndSource(new HwndSourceParameters("Infinite Space test")
+            _source = new HwndSource(new HwndSourceParameters("Desktop_Dimension test")
             {
                 WindowStyle = unchecked((int)Win32.WS_POPUP),
                 ExtendedWindowStyle = (int)(Win32.WS_EX_NOREDIRECTIONBITMAP | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE),

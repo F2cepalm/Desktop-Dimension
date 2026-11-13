@@ -50,7 +50,7 @@ internal sealed class FrameStatsWindow : IDisposable
         _pixelWidth = (int)Math.Ceiling(Width * scale);
         _pixelHeight = (int)Math.Ceiling(Height * scale);
         var area = SystemParameters.WorkArea;
-        _source = new HwndSource(new HwndSourceParameters("Infinite Space frame stats")
+        _source = new HwndSource(new HwndSourceParameters("Desktop_Dimension frame stats")
         {
             WindowStyle = unchecked((int)Win32.WS_POPUP),
             ExtendedWindowStyle = (int)(Win32.WS_EX_TOPMOST | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOACTIVATE | Win32.WS_EX_NOREDIRECTIONBITMAP),

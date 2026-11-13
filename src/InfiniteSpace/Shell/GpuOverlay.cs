@@ -55,7 +55,7 @@ internal abstract class GpuOverlay : IFramePart
         Origin = new Vector(left / scale, top / scale);
 
         // No redirection bitmap: the window shows only what DirectComposition puts in it.
-        _source = new HwndSource(new HwndSourceParameters("Infinite Space")
+        _source = new HwndSource(new HwndSourceParameters("Desktop_Dimension")
         {
             WindowStyle = unchecked((int)Win32.WS_POPUP),
             ExtendedWindowStyle = (int)(Win32.WS_EX_TOPMOST | Win32.WS_EX_TOOLWINDOW | Win32.WS_EX_NOREDIRECTIONBITMAP),
