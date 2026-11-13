@@ -42,7 +42,9 @@ public class SpaceFileTests
         Assert.Equal(new Rect(0, 0, 300, 200), SpaceGeometry.Decode(read).Bounds);
         Assert.True(read.Card);
         var stroke = Assert.Single(read.Strokes);
-        Assert.Equal((new double[] { 20, 20, 100, 100 }, 3.0, "#FF0000"), (stroke.Points, stroke.Thickness, stroke.Color));
+        Assert.Equal(new double[] { 20, 20, 100, 100 }, stroke.Points);
+        Assert.Equal(3.0, stroke.Thickness);
+        Assert.Equal("#FF0000", stroke.Color);
         var note = read.Notes[0];
         Assert.Equal((50.0, 30.0, "Plan: Q4/launch\nsecond line", 18.0, true, "#00FF00"), (note.X, note.Y, note.Text, note.FontSize, note.Bold, note.Color));
         Assert.Equal("file text", read.Notes[1].Text); // an opened file's text is in the file itself
